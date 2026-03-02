@@ -16,6 +16,7 @@ const OUTPUT = vscode.window.createOutputChannel("Codex Mem");
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(OUTPUT);
+  OUTPUT.appendLine("Codex Mem extension activated.");
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.setup", async () => {
@@ -54,6 +55,15 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("codexMem.workerStatus", async () => {
       const status = await runCliJson(["worker", "status"]);
       await openJsonDocument(status, "codex-mem-worker-status.json");
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codexMem.openSettings", async () => {
+      await vscode.commands.executeCommand(
+        "workbench.action.openSettings",
+        `@ext:${context.extension.id} codexMem`
+      );
     })
   );
 

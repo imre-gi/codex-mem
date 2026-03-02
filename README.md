@@ -467,6 +467,21 @@ Single table `entries` with `kind` discriminator:
 
 Local extension package: `vscode-extension/`.
 
+### Fast local install (recommended)
+
+From repo root:
+
+```bash
+cd /home/imre/Development/codex-mem
+npm install
+npm run vscode:install
+```
+
+Then restart VS Code and run:
+
+- `Codex Mem: Open Settings`
+- `Codex Mem: Setup (Enable + Start Worker)`
+
 ### Option A: Development Host
 
 Build:
@@ -487,6 +502,7 @@ Run extension dev host:
    - `Codex Mem: Start Worker`
    - `Codex Mem: Stop Worker`
    - `Codex Mem: Worker Status`
+   - `Codex Mem: Open Settings`
    - `Codex Mem: Initialize Store`
    - `Codex Mem: Add Observation`
    - `Codex Mem: Add Summary`
@@ -501,7 +517,7 @@ cd /home/imre/Development/codex-mem/vscode-extension
 npm install
 npm run build
 npx @vscode/vsce package
-code --install-extension codex-mem-vscode-0.1.0.vsix
+code --install-extension codex-mem-vscode-0.1.1.vsix
 ```
 
 After installing, run command palette action:

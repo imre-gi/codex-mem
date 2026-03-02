@@ -20,8 +20,8 @@ Open this folder in VS Code and press `F5`.
 cd /home/imre/Development/codex-mem/vscode-extension
 npm install
 npm run build
-npx @vscode/vsce package
-code --install-extension codex-mem-vscode-0.1.0.vsix
+npm run package
+code --install-extension codex-mem-vscode-0.1.1.vsix
 ```
 
 ## Commands
@@ -31,6 +31,7 @@ code --install-extension codex-mem-vscode-0.1.0.vsix
 - `Codex Mem: Start Worker`
 - `Codex Mem: Stop Worker`
 - `Codex Mem: Worker Status`
+- `Codex Mem: Open Settings`
 - `Codex Mem: Initialize Store`
 - `Codex Mem: Add Observation`
 - `Codex Mem: Add Summary`
@@ -58,8 +59,9 @@ The extension resolves CLI in this order:
 ## First Run Checklist
 
 1. Run `Codex Mem: Setup (Enable + Start Worker)`
-2. Confirm `Codex Mem: Worker Status` returns `running: true`
-3. In terminal, verify MCP registration:
+2. Run `Codex Mem: Open Settings` (optional, to set `codexMem.cliPath`)
+3. Confirm `Codex Mem: Worker Status` returns `running: true`
+4. In terminal, verify MCP registration:
 
 ```bash
 codex mcp get codex-mem

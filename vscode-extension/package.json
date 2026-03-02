@@ -2,22 +2,24 @@
   "name": "codex-mem-vscode",
   "displayName": "Codex Mem",
   "description": "Persistent memory commands for codex-mem inside VS Code",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "local",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.80.0"
   },
   "categories": [
     "Other"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onCommand:codexMem.setup",
     "onCommand:codexMem.enableMcp",
     "onCommand:codexMem.initStore",
     "onCommand:codexMem.startWorker",
     "onCommand:codexMem.stopWorker",
     "onCommand:codexMem.workerStatus",
+    "onCommand:codexMem.openSettings",
     "onCommand:codexMem.addObservation",
     "onCommand:codexMem.addSummary",
     "onCommand:codexMem.search",
@@ -50,6 +52,10 @@
       {
         "command": "codexMem.workerStatus",
         "title": "Codex Mem: Worker Status"
+      },
+      {
+        "command": "codexMem.openSettings",
+        "title": "Codex Mem: Open Settings"
       },
       {
         "command": "codexMem.addObservation",
@@ -89,11 +95,15 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "package": "vsce package --allow-missing-repository",
+    "install:local": "npm run uninstall:local || true && npm run package && code --install-extension codex-mem-vscode-$npm_package_version.vsix --force",
+    "uninstall:local": "code --uninstall-extension local.codex-mem-vscode"
   },
   "devDependencies": {
+    "@vscode/vsce": "^3.6.0",
     "@types/node": "^24.6.0",
-    "@types/vscode": "^1.90.0",
+    "@types/vscode": "^1.80.0",
     "typescript": "^5.9.3"
   }
 }

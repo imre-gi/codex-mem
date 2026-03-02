@@ -17,6 +17,9 @@
     "test": "vitest run",
     "setup": "npm run build && node dist/cli.js setup",
     "enable": "npm run build && node dist/cli.js enable",
+    "vscode:build": "npm --prefix vscode-extension run build",
+    "vscode:package": "npm --prefix vscode-extension run package",
+    "vscode:install": "npm --prefix vscode-extension run install:local",
     "dev": "tsx src/cli.ts mcp",
     "start": "node dist/cli.js mcp"
   },
