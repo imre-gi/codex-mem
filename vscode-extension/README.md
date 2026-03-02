@@ -1,10 +1,12 @@
-# codex-mem VS Code Extension
+# Retentia VS Code Extension
 
-This extension adds Codex Mem commands to VS Code and runs the `codex-mem` CLI behind the scenes.
+The Retentia VS Code extension adds persistent memory commands, multi-LLM task sync, and execution observability to VS Code using the existing `codexMem.*` command and settings surface.
+
+Compatibility note: command IDs and CLI integration remain unchanged (`codexMem.*` and `codex-mem` / `node dist/cli.js`) so examples stay runnable today.
 
 ## Install
 
-In commands below, `<repo-root>` means the directory where you cloned `codex-mem`.
+In commands below, `<repo-root>` means the directory where you cloned this repository.
 
 ### One-command install (from repo root, recommended)
 
@@ -13,20 +15,21 @@ cd <repo-root>
 npm run install:vscode
 ```
 
-For a clean reinstall from scratch:
+### Clean reinstall
 
 ```bash
 cd <repo-root>
 npm run reinstall:vscode
 ```
 
-Profile override (optional):
+Profile-specific reinstall:
 
 ```bash
+cd <repo-root>
 CODEX_MEM_VSCODE_PROFILE="<profile-name>" npm run reinstall:vscode
 ```
 
-### Development Host
+### Development host
 
 ```bash
 cd <repo-root>/vscode-extension
@@ -34,9 +37,9 @@ npm install
 npm run build
 ```
 
-Open this folder in VS Code and press `F5`.
+Open `vscode-extension` in VS Code and press `F5`.
 
-### VSIX (normal installation)
+### VSIX install
 
 ```bash
 cd <repo-root>/vscode-extension
@@ -48,36 +51,62 @@ code --install-extension codex-mem-vscode-0.1.1.vsix
 
 ## Commands
 
-- `Codex Mem: Setup (Enable + Start Worker)`
-- `Codex Mem: Enable MCP`
-- `Codex Mem: Start Worker`
-- `Codex Mem: Stop Worker`
-- `Codex Mem: Worker Status`
-- `Codex Mem: Sync LLM Tasks (Codex/Claude/Qwen/Gwen)`
-- `Codex Mem: Status Dashboard`
-- `Codex Mem: Project Explorer + Visualizer`
-- `Codex Mem: Open Settings`
-- `Codex Mem: Initialize Store`
-- `Codex Mem: Add Observation`
-- `Codex Mem: Add Summary`
-- `Codex Mem: Search Memory`
-- `Codex Mem: Generate Context Pack`
-- `Codex Mem: Open Memory File`
+All commands below are contributed by the extension and appear in the command palette.
+
+| Command title | Command ID | What it does |
+| --- | --- | --- |
+| `Codex Mem: Setup (Enable + Start Worker)` | `codexMem.setup` | Runs setup to enable MCP and start worker. |
+| `Codex Mem: Enable MCP` | `codexMem.enableMcp` | Registers MCP server for Codex integration. |
+| `Codex Mem: Initialize Store` | `codexMem.initStore` | Ensures local storage is ready. |
+| `Codex Mem: Start Worker` | `codexMem.startWorker` | Starts local worker process. |
+| `Codex Mem: Stop Worker` | `codexMem.stopWorker` | Stops local worker process. |
+| `Codex Mem: Worker Status` | `codexMem.workerStatus` | Shows worker runtime status payload. |
+| `Codex Mem: Sync LLM Tasks (Codex/Claude/Qwen/Gwen)` | `codexMem.syncCodexTasks` | Imports execution events from enabled providers. |
+| `Codex Mem: Project Explorer + Visualizer` | `codexMem.projectExplorer` | Opens dashboard focused on execution exploration. |
+| `Codex Mem: Status Dashboard` | `codexMem.statusDashboard` | Opens full dashboard with runtime and KPIs. |
+| `Codex Mem: Open Settings` | `codexMem.openSettings` | Opens extension settings in VS Code UI. |
+| `Codex Mem: Add Observation` | `codexMem.addObservation` | Interactive prompt to create an observation entry. |
+| `Codex Mem: Add Summary` | `codexMem.addSummary` | Interactive prompt to create a summary entry. |
+| `Codex Mem: Search Memory` | `codexMem.search` | Runs search and opens JSON results. |
+| `Codex Mem: Generate Context Pack` | `codexMem.contextPack` | Creates compact memory context for prompt priming. |
+| `Codex Mem: Open Memory File` | `codexMem.openMemoryFile` | Opens the active SQLite data file location. |
 
 ## Settings
 
-- `codexMem.cliPath`: optional explicit path to `codex-mem` binary or `dist/cli.js`.
-- `codexMem.defaultProject`: optional default project name.
-- `codexMem.autoSyncCodexTasks`: auto-sync task execution events when dashboard refreshes.
-- `codexMem.enabledProviders`: provider list for sync (`codex`, `claude`, `qwen`, `gwen`, or `all`).
-- `codexMem.autoSyncLookbackDays`: how many recent days of provider sessions are scanned.
-- `codexMem.autoSyncMaxImport`: max new tasks imported per sync run.
-- `codexMem.autoSyncMaxFiles`: max recent session files scanned per provider.
-- `codexMem.codexSessionsPath`: optional override for Codex sessions directory (default `~/.codex/sessions`).
-- `codexMem.claudeSessionsPath`: optional override for Claude sessions directory (default `~/.claude/projects`).
-- `codexMem.qwenSessionsPath`: optional override for Qwen sessions directory (default `~/.qwen/sessions`).
-- `codexMem.gwenSessionsPath`: optional override for Gwen sessions directory (default `~/.gwen/sessions`).
-- `codexMem.executionReportLimit`: max entries loaded for explorer/visualizer.
+| Setting | Default | Intent |
+| --- | --- | --- |
+| `codexMem.cliPath` | `""` | Explicit path to CLI binary or `dist/cli.js`. |
+| `codexMem.defaultProject` | `""` | Default project when creating entries from VS Code. |
+| `codexMem.autoSyncCodexTasks` | `true` | Auto-sync execution events during dashboard refresh. |
+| `codexMem.enabledProviders` | `["codex","claude","qwen","gwen"]` | Providers included in task ingestion. |
+| `codexMem.autoSyncLookbackDays` | `7` | Session log lookback window in days. |
+| `codexMem.autoSyncMaxImport` | `25` | Max task imports per sync run. |
+| `codexMem.autoSyncMaxFiles` | `24` | Max session files scanned per provider. |
+| `codexMem.codexSessionsPath` | `""` | Optional Codex sessions path override. |
+| `codexMem.claudeSessionsPath` | `""` | Optional Claude Code sessions path override. |
+| `codexMem.qwenSessionsPath` | `""` | Optional Qwen sessions path override. |
+| `codexMem.gwenSessionsPath` | `""` | Optional Gwen sessions path override. |
+| `codexMem.executionReportLimit` | `600` | Max entries loaded for visualizer/explorer views. |
+
+## Dashboard Walkthrough
+
+The Status Dashboard combines operations and analytics in one view:
+
+- Top actions: `Refresh`, `Setup`, `Sync LLM Tasks`, `Start Worker`, `Stop Worker`.
+- KPI cards: worker state, MCP state, task totals, project totals, provider and agent counts.
+- Runtime panel: PID, uptime, endpoint, MCP config command/args, DB file path.
+- Provider Sync table: detected/imported/skipped/failed counts by provider.
+- Execution Visualizer: bar charts by provider, status, agent, and model.
+- Project Explorer: per-project totals with done/failed and latest activity.
+- Task Explorer: filterable task list by project/provider/agent/model/status.
+
+## About "Tasks Executed"
+
+`Tasks Executed` reflects entries stored in Retentia memory storage.
+
+- If your workflow does not call `mem_add_observation` or `mem_add_summary`, totals can remain low.
+- To improve out-of-the-box visibility, the extension syncs execution events from enabled providers into observations.
+- Trigger manual ingestion any time with `Codex Mem: Sync LLM Tasks (Codex/Claude/Qwen/Gwen)`.
 
 ## CLI Discovery
 
@@ -91,53 +120,44 @@ The extension resolves CLI in this order:
 6. `<workspace>/../../codex-mem/dist/cli.js`
 7. `codex-mem` from PATH
 
-## First Run Checklist
+## Troubleshooting
 
-1. Run `Codex Mem: Setup (Enable + Start Worker)`
-2. Run `Codex Mem: Status Dashboard` (visual webview)
-3. Run `Codex Mem: Open Settings` (optional, to set `codexMem.cliPath`)
-4. Confirm `Codex Mem: Worker Status` returns `running: true`
-5. In terminal, verify MCP registration:
+### Command palette does not show commands
+
+1. Reinstall extension:
 
 ```bash
+cd <repo-root>
+npm run reinstall:vscode
+```
+
+2. Run `Developer: Reload Window` in VS Code.
+3. Open `Ctrl+Shift+P` and search `Codex Mem`.
+
+### CLI path resolution issues
+
+Set `codexMem.cliPath` explicitly to:
+
+- `<repo-root>/dist/cli.js`, or
+- `codex-mem` (global binary).
+
+Then run `Codex Mem: Worker Status` to confirm connectivity.
+
+### MCP visible in extension but not active in Codex
+
+Verify in terminal:
+
+```bash
+codex mcp list
 codex mcp get codex-mem
 ```
 
-If CLI lookup fails, set `codexMem.cliPath` to:
-
-- `<repo-root>/dist/cli.js`, or
-- a globally available `codex-mem` binary.
-
-If commands are missing in `Ctrl+Shift+P`, run:
-
-1. `Developer: Reload Window`
-2. search for `Codex Mem` (with space)
-
-If you use multiple VS Code profiles, reinstall with explicit profile:
+If missing, run:
 
 ```bash
-CODEX_MEM_VSCODE_PROFILE="<profile-name>" npm run reinstall:vscode
+cd <repo-root>
+node dist/cli.js setup
 ```
-
-Status Dashboard provides:
-
-- worker runtime state
-- MCP registration/config state
-- KPI totals (entries/projects/providers/agents)
-- recent memory task execution list
-- provider sync matrix (detected/imported/skipped/failed)
-- execution visualizer (provider, model, agent, status distributions)
-- project explorer table with per-project task outcomes
-- task explorer filters (project/provider/agent/model/status)
-- action buttons for refresh/setup/sync/start/stop worker
-
-## About "Tasks Executed"
-
-The dashboard `Tasks Executed` KPI is backed by stored codex-mem entries.
-
-- If your agent does not call `mem_add_observation`/`mem_add_summary`, the KPI will stay `0`.
-- To make this work out-of-the-box, the extension syncs task-execution events from enabled providers into codex-mem observations.
-- You can trigger a manual import any time with `Codex Mem: Sync LLM Tasks (Codex/Claude/Qwen/Gwen)`.
 
 ## Development
 
@@ -147,4 +167,4 @@ npm install
 npm run build
 ```
 
-Press `F5` in VS Code to start an Extension Development Host.
+Start Extension Development Host with `F5` in VS Code.

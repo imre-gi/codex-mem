@@ -102,6 +102,7 @@ describe("task sync", () => {
       expect(result.detectedTasks).toBe(2);
       expect(result.importedTasks).toBe(2);
       expect(result.failedTasks).toBe(0);
+      expect(result.newestTaskAt).toBe("2026-03-02T10:01:22.000Z");
       expect(store.hasExternalKey("codex:turn-codex-1")).toBe(true);
       expect(store.hasExternalKey("claude:claude-session-1:toolu_sync_1")).toBe(true);
 

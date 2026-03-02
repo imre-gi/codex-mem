@@ -136,27 +136,19 @@ export function syncTaskExecutions(
   const ordered = [...detectedByExternalId.values()].sort((left, right) =>
     right.timestamp.localeCompare(left.timestamp)
   );
+  const importQueue = interleaveByProvider(ordered, providers);
 
   let importedTasks = 0;
   let skippedTasks = 0;
   let failedTasks = 0;
-  const importedPerProvider = new Map<LlmProvider, number>();
-  const providerCap = Math.max(1, Math.floor(maxImport / Math.max(providers.length, 1)));
 
-  for (const event of ordered) {
+  for (const event of importQueue) {
     const providerCounter = counters.get(event.provider);
     if (!providerCounter) {
       continue;
     }
 
     if (importedTasks >= maxImport) {
-      skippedTasks += 1;
-      providerCounter.skipped += 1;
-      continue;
-    }
-
-    const providerImported = importedPerProvider.get(event.provider) || 0;
-    if (providerImported >= providerCap) {
       skippedTasks += 1;
       providerCounter.skipped += 1;
       continue;
@@ -179,7 +171,6 @@ export function syncTaskExecutions(
         tags: buildObservationTags(event)
       });
       importedTasks += 1;
-      importedPerProvider.set(event.provider, providerImported + 1);
       providerCounter.imported += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -217,9 +208,46 @@ export function syncTaskExecutions(
     importedTasks,
     skippedTasks,
     failedTasks,
-    newestTaskAt: ordered[ordered.length - 1]?.timestamp,
+    newestTaskAt: ordered[0]?.timestamp,
     byProvider
   };
+}
+
+function interleaveByProvider(
+  events: TaskEvent[],
+  providers: LlmProvider[]
+): TaskEvent[] {
+  const buckets = new Map<LlmProvider, TaskEvent[]>();
+  for (const provider of providers) {
+    buckets.set(provider, []);
+  }
+
+  for (const event of events) {
+    const bucket = buckets.get(event.provider);
+    if (bucket) {
+      bucket.push(event);
+    }
+  }
+
+  const merged: TaskEvent[] = [];
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+    for (const provider of providers) {
+      const bucket = buckets.get(provider);
+      if (!bucket || bucket.length === 0) {
+        continue;
+      }
+      const next = bucket.shift();
+      if (!next) {
+        continue;
+      }
+      merged.push(next);
+      progressed = true;
+    }
+  }
+
+  return merged;
 }
 
 function collectProviderEvents(
