@@ -11,6 +11,9 @@ export {
 export type {
   AddObservationInput,
   AddSummaryInput,
+  IoTraceEntry,
+  IoTraceOp,
+  ListIoTraceOptions,
   MemoryData,
   MemoryEntry,
   ObservationEntry,

@@ -5,7 +5,10 @@ import Database from "better-sqlite3";
 import type {
   AddObservationInput,
   AddSummaryInput,
+  IoTraceEntry,
+  IoTraceOp,
   ListEntriesOptions,
+  ListIoTraceOptions,
   MemoryKpis,
   MemoryEntry,
   ObservationEntry,
@@ -51,6 +54,15 @@ interface KpiRow {
   projects_total: number;
   latest_entry_at: string | null;
   oldest_entry_at: string | null;
+}
+
+interface IoTraceRow {
+  id: number;
+  created_at: string;
+  source: string;
+  op: IoTraceOp;
+  req: string;
+  res: string;
 }
 
 function resolveDefaultDbFile(): string {
@@ -373,6 +385,83 @@ export class MemoryStore {
     };
   }
 
+  addIoTrace(input: {
+    source?: string;
+    op: IoTraceOp;
+    req: unknown;
+    res: unknown;
+  }): IoTraceEntry {
+    const createdAt = new Date().toISOString();
+    const source = this.cleanOptional(input.source) || "unknown";
+    const req = this.toCompactJson(input.req);
+    const res = this.toCompactJson(input.res);
+    const info = this.db
+      .prepare(
+        `
+      INSERT INTO io_trace (
+        created_at,
+        source,
+        op,
+        req,
+        res
+      ) VALUES (?, ?, ?, ?, ?)
+    `
+      )
+      .run(createdAt, source, input.op, req, res);
+
+    return {
+      id: Number(info.lastInsertRowid),
+      createdAt,
+      source,
+      op: input.op,
+      req,
+      res
+    };
+  }
+
+  listIoTrace(options: ListIoTraceOptions = {}): IoTraceEntry[] {
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (options.source) {
+      clauses.push("source = ?");
+      params.push(options.source);
+    }
+
+    if (options.op) {
+      clauses.push("op = ?");
+      params.push(options.op);
+    }
+
+    if (options.since) {
+      clauses.push("created_at >= ?");
+      params.push(options.since);
+    }
+
+    if (options.until) {
+      clauses.push("created_at <= ?");
+      params.push(options.until);
+    }
+
+    const limit = this.resolveListLimit(options.limit);
+    const offset = this.resolveOffset(options.offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM io_trace ${whereClause} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
+      )
+      .all(...params, limit, offset) as IoTraceRow[];
+
+    return rows.map((row) => ({
+      id: row.id,
+      createdAt: row.created_at,
+      source: row.source,
+      op: row.op,
+      req: row.req,
+      res: row.res
+    }));
+  }
+
   private initializeSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS entries (
@@ -399,6 +488,19 @@ export class MemoryStore {
       CREATE INDEX IF NOT EXISTS idx_entries_project ON entries(project);
       CREATE INDEX IF NOT EXISTS idx_entries_kind ON entries(kind);
       CREATE INDEX IF NOT EXISTS idx_entries_created ON entries(created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS io_trace (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        source TEXT NOT NULL,
+        op TEXT NOT NULL,
+        req TEXT NOT NULL,
+        res TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_io_trace_created ON io_trace(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_io_trace_source ON io_trace(source);
+      CREATE INDEX IF NOT EXISTS idx_io_trace_op ON io_trace(op);
     `);
 
     this.ensureColumnExists("external_key", "TEXT");
@@ -681,5 +783,21 @@ export class MemoryStore {
     }
 
     return firstMatch.id;
+  }
+
+  private toCompactJson(value: unknown): string {
+    if (typeof value === "string") {
+      return value.trim();
+    }
+
+    if (value === undefined) {
+      return "{}";
+    }
+
+    try {
+      return JSON.stringify(value) || "{}";
+    } catch {
+      return JSON.stringify({ error: "unserializable" });
+    }
   }
 }

@@ -42,7 +42,7 @@ export async function startMcpServer(
       options.workerPort || DEFAULT_WORKER_PORT
     );
 
-  const client = new MemoryServiceClient(workerUrl);
+  const client = new MemoryServiceClient(workerUrl, "mcp");
 
   const server = new Server(
     {
@@ -344,7 +344,7 @@ function textResult(payload: unknown): {
     content: [
       {
         type: "text",
-        text: JSON.stringify(payload, null, 2)
+        text: JSON.stringify(payload)
       }
     ]
   };

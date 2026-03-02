@@ -4,6 +4,7 @@ import { MemoryStore } from "./store.js";
 import type {
   AddObservationInput,
   AddSummaryInput,
+  ListIoTraceOptions,
   SearchOptions,
   TimelineOptions
 } from "./types.js";
@@ -97,6 +98,26 @@ async function routeRequest(
   if (method === "POST" && url === "/api/memory/add-observation") {
     const body = await readJsonBody(req);
     const saved = store.addObservation(body as unknown as AddObservationInput);
+    store.addIoTrace({
+      source: resolveTraceSource(req, body),
+      op: "w_obs",
+      req: {
+        p: pickString(body, "project"),
+        sid: pickString(body, "sessionId"),
+        ek: pickString(body, "externalKey"),
+        t: pickString(body, "observationType"),
+        ttl: pickString(body, "title"),
+        c: pickString(body, "content"),
+        tg: pickStringArray(body, "tags"),
+        f: pickStringArray(body, "files")
+      },
+      res: {
+        id: saved.id,
+        k: saved.kind,
+        p: saved.project,
+        at: saved.createdAt
+      }
+    });
     sendJson(res, 200, { ok: true, data: saved });
     return;
   }
@@ -104,6 +125,29 @@ async function routeRequest(
   if (method === "POST" && url === "/api/memory/add-summary") {
     const body = await readJsonBody(req);
     const saved = store.addSummary(body as unknown as AddSummaryInput);
+    store.addIoTrace({
+      source: resolveTraceSource(req, body),
+      op: "w_sum",
+      req: {
+        p: pickString(body, "project"),
+        sid: pickString(body, "sessionId"),
+        ek: pickString(body, "externalKey"),
+        rq: pickString(body, "request"),
+        i: pickString(body, "investigated"),
+        l: pickString(body, "learned"),
+        c: pickString(body, "completed"),
+        ns: pickString(body, "nextSteps"),
+        tg: pickStringArray(body, "tags"),
+        fr: pickStringArray(body, "filesRead"),
+        fe: pickStringArray(body, "filesEdited")
+      },
+      res: {
+        id: saved.id,
+        k: saved.kind,
+        p: saved.project,
+        at: saved.createdAt
+      }
+    });
     sendJson(res, 200, { ok: true, data: saved });
     return;
   }
@@ -111,6 +155,22 @@ async function routeRequest(
   if (method === "POST" && url === "/api/memory/search") {
     const body = await readJsonBody(req);
     const results = store.search(body as SearchOptions);
+    store.addIoTrace({
+      source: resolveTraceSource(req, body),
+      op: "q_search",
+      req: {
+        q: pickString(body, "query"),
+        p: pickString(body, "project"),
+        k: pickString(body, "kind"),
+        s: pickString(body, "since"),
+        u: pickString(body, "until"),
+        l: pickNumber(body, "limit")
+      },
+      res: {
+        n: results.length,
+        ids: results.map((item) => item.id).slice(0, 100)
+      }
+    });
     sendJson(res, 200, { ok: true, data: { total: results.length, results } });
     return;
   }
@@ -118,6 +178,21 @@ async function routeRequest(
   if (method === "POST" && url === "/api/memory/timeline") {
     const body = await readJsonBody(req);
     const timeline = store.timeline(body as TimelineOptions);
+    store.addIoTrace({
+      source: resolveTraceSource(req, body),
+      op: "q_timeline",
+      req: {
+        id: pickNumber(body, "id"),
+        q: pickString(body, "query"),
+        p: pickString(body, "project"),
+        b: pickNumber(body, "before"),
+        a: pickNumber(body, "after")
+      },
+      res: {
+        aid: timeline.anchorId,
+        ids: timeline.entries.map((entry) => entry.id)
+      }
+    });
     sendJson(res, 200, { ok: true, data: timeline });
     return;
   }
@@ -130,6 +205,15 @@ async function routeRequest(
           .filter((value: number) => !Number.isNaN(value))
       : [];
     const entries = store.getEntries(ids);
+    store.addIoTrace({
+      source: resolveTraceSource(req, body),
+      op: "r_entries",
+      req: { ids },
+      res: {
+        n: entries.length,
+        ids: entries.map((entry) => entry.id)
+      }
+    });
     sendJson(res, 200, { ok: true, data: { total: entries.length, entries } });
     return;
   }
@@ -137,12 +221,38 @@ async function routeRequest(
   if (method === "POST" && url === "/api/memory/context-pack") {
     const body = await readJsonBody(req);
     const context = buildContextPack(store, body);
+    store.addIoTrace({
+      source: resolveTraceSource(req, body),
+      op: "r_context",
+      req: {
+        q: pickString(body, "query"),
+        p: pickString(body, "project"),
+        l: pickNumber(body, "limit"),
+        fc: pickNumber(body, "fullCount")
+      },
+      res: {
+        chars: context.length
+      }
+    });
     sendJson(res, 200, { ok: true, data: { context } });
+    return;
+  }
+
+  if (method === "POST" && url === "/api/memory/io-trace") {
+    const body = await readJsonBody(req);
+    const events = store.listIoTrace(body as ListIoTraceOptions);
+    sendJson(res, 200, { ok: true, data: { total: events.length, events } });
     return;
   }
 
   if (method === "GET" && url === "/api/memory/projects") {
     const projects = store.listProjects();
+    store.addIoTrace({
+      source: resolveTraceSource(req),
+      op: "r_projects",
+      req: {},
+      res: { n: projects.length, p: projects.slice(0, 100) }
+    });
     sendJson(res, 200, { ok: true, data: { projects } });
     return;
   }
@@ -176,4 +286,66 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
     "content-length": Buffer.byteLength(body)
   });
   res.end(body);
+}
+
+function resolveTraceSource(
+  req: IncomingMessage,
+  body?: Record<string, unknown>
+): string {
+  const headerValue = req.headers["x-retentia-source"];
+  if (typeof headerValue === "string" && headerValue.trim()) {
+    return headerValue.trim();
+  }
+
+  if (Array.isArray(headerValue) && headerValue.length > 0) {
+    const first = headerValue[0]?.trim();
+    if (first) {
+      return first;
+    }
+  }
+
+  const bodySource = body?._source;
+  if (typeof bodySource === "string" && bodySource.trim()) {
+    return bodySource.trim();
+  }
+
+  return "api";
+}
+
+function pickString(body: Record<string, unknown>, key: string): string | undefined {
+  const value = body[key];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function pickNumber(body: Record<string, unknown>, key: string): number | undefined {
+  const value = body[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const numeric = Number(value);
+    if (!Number.isNaN(numeric) && Number.isFinite(numeric)) {
+      return numeric;
+    }
+  }
+  return undefined;
+}
+
+function pickStringArray(
+  body: Record<string, unknown>,
+  key: string
+): string[] | undefined {
+  const value = body[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const clean = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return clean.length > 0 ? clean : undefined;
 }

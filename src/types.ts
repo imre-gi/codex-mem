@@ -112,6 +112,33 @@ export interface TimelineResult {
   entries: MemoryEntry[];
 }
 
+export type IoTraceOp =
+  | "w_obs"
+  | "w_sum"
+  | "q_search"
+  | "q_timeline"
+  | "r_entries"
+  | "r_context"
+  | "r_projects";
+
+export interface IoTraceEntry {
+  id: number;
+  createdAt: string;
+  source: string;
+  op: IoTraceOp;
+  req: string;
+  res: string;
+}
+
+export interface ListIoTraceOptions {
+  source?: string;
+  op?: IoTraceOp;
+  since?: string;
+  until?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export interface MemoryKpis {
   entriesTotal: number;
   observationsTotal: number;

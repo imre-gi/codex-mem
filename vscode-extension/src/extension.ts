@@ -26,6 +26,25 @@ interface DashboardTask {
   createdAt: string;
 }
 
+interface DashboardDbEntry {
+  id: number;
+  kind: string;
+  project: string;
+  createdAt: string;
+  title: string;
+  observationType: string;
+  tagsCount: number;
+}
+
+interface DashboardIoTraceEvent {
+  id: number;
+  createdAt: string;
+  source: string;
+  op: string;
+  req: string;
+  res: string;
+}
+
 interface DashboardData {
   generatedAt: string;
   dataFile: string;
@@ -100,6 +119,24 @@ interface DashboardData {
       sourceFile?: string;
       tags: string[];
     }>;
+  };
+  db: {
+    sampleSize: number;
+    entriesLast24h: number;
+    activeProjects: number;
+    avgTagsPerEntry: number;
+    summaryRatio: number;
+    latestEntries: DashboardDbEntry[];
+    kindCounts: Array<{ key: string; count: number }>;
+    projectCounts: Array<{ key: string; count: number }>;
+    observationTypeCounts: Array<{ key: string; count: number }>;
+    dailyCounts: Array<{ key: string; count: number }>;
+  };
+  io: {
+    sampleSize: number;
+    sourceCounts: Array<{ key: string; count: number }>;
+    operationCounts: Array<{ key: string; count: number }>;
+    latestEvents: DashboardIoTraceEvent[];
   };
   recentTasks: DashboardTask[];
   error?: string;
@@ -905,10 +942,12 @@ async function renderDashboardPanel(panel: vscode.WebviewPanel): Promise<void> {
 
 async function collectDashboardData(): Promise<DashboardData> {
   const ingestion = await syncTaskExecutions({ force: false });
-  const [statusPayload, recentPayload, executionPayload] = await Promise.all([
+  const [statusPayload, recentPayload, executionPayload, dbQueryPayload, ioTracePayload] = await Promise.all([
     runCliJson(["kpis"]),
     runCliJson(["search", "--limit", "8"]),
-    runCliJson(["execution-report", "--limit", String(getExecutionReportLimit())])
+    runCliJson(["execution-report", "--limit", String(getExecutionReportLimit())]),
+    runCliJson(["list-entries", "--limit", "200"]),
+    runCliJson(["io-trace", "--source", "mcp", "--limit", "200"])
   ]);
 
   const statusRoot = toRecord(statusPayload);
@@ -916,8 +955,12 @@ async function collectDashboardData(): Promise<DashboardData> {
   const kpis = toRecord(statusRoot.kpis);
   const recentRoot = toRecord(recentPayload);
   const executionRoot = toRecord(executionPayload);
+  const dbRoot = toRecord(dbQueryPayload);
+  const ioRoot = toRecord(ioTracePayload);
   const mcp = readMcpStatus();
   const recentSource = Array.isArray(recentRoot.results) ? recentRoot.results : [];
+  const dbEntries = mapDbEntries(dbRoot.entries);
+  const ioEvents = mapIoTraceEvents(ioRoot.events);
 
   const recentTasks = recentSource
     .map((item) => toRecord(item))
@@ -931,6 +974,8 @@ async function collectDashboardData(): Promise<DashboardData> {
     .filter((item) => Boolean(item.createdAt || item.title));
 
   const execution = mapExecutionReport(executionRoot);
+  const db = buildDbInsights(dbEntries);
+  const io = buildIoInsights(ioEvents);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -954,6 +999,8 @@ async function collectDashboardData(): Promise<DashboardData> {
     },
     ingestion,
     execution,
+    db,
+    io,
     recentTasks
   };
 }
@@ -995,6 +1042,24 @@ function createEmptyDashboardData(error?: string): DashboardData {
       models: [],
       statuses: [],
       tasks: []
+    },
+    db: {
+      sampleSize: 0,
+      entriesLast24h: 0,
+      activeProjects: 0,
+      avgTagsPerEntry: 0,
+      summaryRatio: 0,
+      latestEntries: [],
+      kindCounts: [],
+      projectCounts: [],
+      observationTypeCounts: [],
+      dailyCounts: []
+    },
+    io: {
+      sampleSize: 0,
+      sourceCounts: [],
+      operationCounts: [],
+      latestEvents: []
     },
     recentTasks: [],
     error
@@ -1213,6 +1278,174 @@ function mapExecutionTasks(value: unknown): DashboardData["execution"]["tasks"] 
       sourceFile: toText(item.sourceFile),
       tags: mapStringList(item.tags)
     }));
+}
+
+function mapDbEntries(value: unknown): DashboardDbEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => toRecord(item))
+    .map((item) => {
+      const kind = toText(item.kind) || "unknown";
+      const observationType =
+        kind === "observation" ? toText(item.observationType) || "note" : "summary";
+      const tags = mapStringList(item.tags);
+      const title = resolveDbEntryTitle(item, kind);
+
+      return {
+        id: toNumber(item.id) ?? 0,
+        kind,
+        project: toText(item.project) || "unknown",
+        createdAt: toText(item.createdAt) || "",
+        title,
+        observationType,
+        tagsCount: tags.length
+      };
+    });
+}
+
+function resolveDbEntryTitle(item: JsonResult, kind: string): string {
+  if (kind === "observation") {
+    return clipText(
+      toText(item.title) || toText(item.content) || "(untitled observation)",
+      120
+    );
+  }
+
+  return clipText(
+    toText(item.learned) ||
+      toText(item.completed) ||
+      toText(item.request) ||
+      "(untitled summary)",
+    120
+  );
+}
+
+function buildDbInsights(entries: DashboardDbEntry[]): DashboardData["db"] {
+  const now = Date.now();
+  const entriesLast24h = entries.reduce((count, entry) => {
+    const created = Date.parse(entry.createdAt);
+    if (Number.isNaN(created)) {
+      return count;
+    }
+    return now - created <= 24 * 60 * 60 * 1000 ? count + 1 : count;
+  }, 0);
+
+  const totalTags = entries.reduce((sum, entry) => sum + entry.tagsCount, 0);
+  const avgTagsPerEntry = entries.length > 0 ? roundToOneDecimal(totalTags / entries.length) : 0;
+  const activeProjects = new Set(entries.map((entry) => entry.project)).size;
+  const summaryCount = entries.filter((entry) => entry.kind === "summary").length;
+  const summaryRatio =
+    entries.length > 0 ? Math.round((summaryCount / entries.length) * 100) : 0;
+
+  return {
+    sampleSize: entries.length,
+    entriesLast24h,
+    activeProjects,
+    avgTagsPerEntry,
+    summaryRatio,
+    latestEntries: entries.slice(0, 20),
+    kindCounts: sortCountMapToList(countBy(entries, (entry) => entry.kind), 8),
+    projectCounts: sortCountMapToList(countBy(entries, (entry) => entry.project), 8),
+    observationTypeCounts: sortCountMapToList(
+      countBy(entries, (entry) => entry.observationType),
+      8
+    ),
+    dailyCounts: buildDailyCounts(entries, 7)
+  };
+}
+
+function mapIoTraceEvents(value: unknown): DashboardIoTraceEvent[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => toRecord(item))
+    .map((item) => ({
+      id: toNumber(item.id) ?? 0,
+      createdAt: toText(item.createdAt) || "",
+      source: toText(item.source) || "unknown",
+      op: toText(item.op) || "unknown",
+      req: clipText(toText(item.req) || "{}", 400),
+      res: clipText(toText(item.res) || "{}", 400)
+    }));
+}
+
+function buildIoInsights(events: DashboardIoTraceEvent[]): DashboardData["io"] {
+  return {
+    sampleSize: events.length,
+    sourceCounts: sortCountMapToList(countBy(events, (event) => event.source), 8),
+    operationCounts: sortCountMapToList(countBy(events, (event) => event.op), 12),
+    latestEvents: events.slice(0, 20)
+  };
+}
+
+function countBy<T>(items: T[], getKey: (item: T) => string): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const key = getKey(item).trim() || "unknown";
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+function sortCountMapToList(
+  counts: Map<string, number>,
+  limit: number
+): Array<{ key: string; count: number }> {
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((left, right) => {
+      if (right.count !== left.count) {
+        return right.count - left.count;
+      }
+      return left.key.localeCompare(right.key);
+    })
+    .slice(0, limit);
+}
+
+function buildDailyCounts(
+  entries: DashboardDbEntry[],
+  days: number
+): Array<{ key: string; count: number }> {
+  const byDay = new Map<string, number>();
+  for (const entry of entries) {
+    const date = new Date(entry.createdAt);
+    if (Number.isNaN(date.getTime())) {
+      continue;
+    }
+    const key = date.toISOString().slice(0, 10);
+    byDay.set(key, (byDay.get(key) || 0) + 1);
+  }
+
+  const output: Array<{ key: string; count: number }> = [];
+  for (let index = days - 1; index >= 0; index -= 1) {
+    const day = new Date();
+    day.setHours(0, 0, 0, 0);
+    day.setDate(day.getDate() - index);
+    const iso = day.toISOString().slice(0, 10);
+    const label = day.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    output.push({
+      key: label,
+      count: byDay.get(iso) || 0
+    });
+  }
+
+  return output;
+}
+
+function clipText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function roundToOneDecimal(value: number): number {
+  return Math.round(value * 10) / 10;
 }
 
 function mapStringList(value: unknown): string[] {
@@ -1666,6 +1899,47 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
   const agentBars = renderBars(data.execution.agents, "agent");
   const modelBars = renderBars(data.execution.models, "model");
   const statusBars = renderBars(data.execution.statuses, "status");
+  const dbKindBars = renderBars(data.db.kindCounts, "entry kind");
+  const dbProjectBars = renderBars(data.db.projectCounts, "project");
+  const dbTypeBars = renderBars(data.db.observationTypeCounts, "observation type");
+  const dbDailyBars = renderBars(data.db.dailyCounts, "day");
+  const ioOpBars = renderBars(data.io.operationCounts, "operation");
+  const ioSourceBars = renderBars(data.io.sourceCounts, "source");
+  const dbLatestRows =
+    data.db.latestEntries.length > 0
+      ? data.db.latestEntries
+          .map(
+            (entry) => `
+              <tr>
+                <td>${entry.id}</td>
+                <td>${escapeHtml(formatIsoCompact(entry.createdAt))}</td>
+                <td>${escapeHtml(entry.project)}</td>
+                <td>${escapeHtml(entry.kind)}</td>
+                <td>${escapeHtml(entry.observationType)}</td>
+                <td>${entry.tagsCount}</td>
+                <td title="${escapeHtml(entry.title)}">${escapeHtml(entry.title)}</td>
+              </tr>
+            `
+          )
+          .join("")
+      : `<tr><td colspan="7" class="muted">No DB entries found yet.</td></tr>`;
+  const ioLatestRows =
+    data.io.latestEvents.length > 0
+      ? data.io.latestEvents
+          .map(
+            (event) => `
+              <tr>
+                <td>${event.id}</td>
+                <td>${escapeHtml(formatIsoCompact(event.createdAt))}</td>
+                <td>${escapeHtml(event.source)}</td>
+                <td>${escapeHtml(event.op)}</td>
+                <td title="${escapeHtml(event.req)}"><code>${escapeHtml(event.req)}</code></td>
+                <td title="${escapeHtml(event.res)}"><code>${escapeHtml(event.res)}</code></td>
+              </tr>
+            `
+          )
+          .join("")
+      : `<tr><td colspan="6" class="muted">No MCP I/O events yet.</td></tr>`;
   const taskDataJson = toScriptJson(data.execution.tasks);
 
   const errorBlock = data.error
@@ -2058,6 +2332,30 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
           <div class="label">Agents</div>
           <div class="value">${data.execution.agents.length}</div>
         </article>
+        <article class="card">
+          <div class="label">DB Rows (Query)</div>
+          <div class="value">${data.db.sampleSize}</div>
+        </article>
+        <article class="card">
+          <div class="label">DB Last 24h</div>
+          <div class="value">${data.db.entriesLast24h}</div>
+        </article>
+        <article class="card">
+          <div class="label">DB Active Projects</div>
+          <div class="value">${data.db.activeProjects}</div>
+        </article>
+        <article class="card">
+          <div class="label">DB Avg Tags/Entry</div>
+          <div class="value">${data.db.avgTagsPerEntry.toFixed(1)}</div>
+        </article>
+        <article class="card">
+          <div class="label">DB Summary Ratio</div>
+          <div class="value">${data.db.summaryRatio}%</div>
+        </article>
+        <article class="card">
+          <div class="label">LLM I/O Rows</div>
+          <div class="value">${data.io.sampleSize}</div>
+        </article>
       </section>
 
       <section class="panels">
@@ -2141,6 +2439,57 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
       </section>
 
       <section class="panel" style="margin-top:12px;">
+        <h3>DB Query Visualizer</h3>
+        <div class="subgrid">
+          <div>
+            <div class="label">By Kind</div>
+            <div class="bars">${dbKindBars}</div>
+          </div>
+          <div>
+            <div class="label">By Observation Type</div>
+            <div class="bars">${dbTypeBars}</div>
+          </div>
+          <div>
+            <div class="label">By Project</div>
+            <div class="bars">${dbProjectBars}</div>
+          </div>
+          <div>
+            <div class="label">Entries (Last 7 Days)</div>
+            <div class="bars">${dbDailyBars}</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" style="margin-top:12px;">
+        <h3>LLM DB I/O Trace (MCP)</h3>
+        <div class="subgrid">
+          <div>
+            <div class="label">By Operation</div>
+            <div class="bars">${ioOpBars}</div>
+          </div>
+          <div>
+            <div class="label">By Source</div>
+            <div class="bars">${ioSourceBars}</div>
+          </div>
+        </div>
+        <div class="table-wrap" style="margin-top:10px;">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>When</th>
+                <th>Source</th>
+                <th>Op</th>
+                <th>Request (compact)</th>
+                <th>Result (compact)</th>
+              </tr>
+            </thead>
+            <tbody>${ioLatestRows}</tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" style="margin-top:12px;">
         <h3>Task Explorer</h3>
         <div class="filter-row">
           <select id="filter-project"></select>
@@ -2166,6 +2515,26 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
             <tbody id="taskRows">
               <tr><td colspan="7" class="muted">No task execution data available yet.</td></tr>
             </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" style="margin-top:12px;">
+        <h3>Latest 20 DB Entries</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>When</th>
+                <th>Project</th>
+                <th>Kind</th>
+                <th>Type</th>
+                <th>Tags</th>
+                <th>Title / Learned</th>
+              </tr>
+            </thead>
+            <tbody>${dbLatestRows}</tbody>
           </table>
         </div>
       </section>
@@ -2368,4 +2737,17 @@ function formatIso(value: string | undefined): string {
   }
 
   return `${date.toLocaleString()} (${value})`;
+}
+
+function formatIsoCompact(value: string | undefined): string {
+  if (!value) {
+    return "n/a";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString();
 }

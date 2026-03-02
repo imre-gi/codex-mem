@@ -138,4 +138,33 @@ describe("MemoryStore", () => {
       expect(listed[0]?.createdAt >= listed[1]?.createdAt).toBe(true);
     });
   });
+
+  test("stores and lists compact io trace events", () => {
+    withStore((store) => {
+      store.addIoTrace({
+        source: "mcp",
+        op: "q_search",
+        req: { q: "auth", p: "fred-client", l: 10 },
+        res: { n: 2, ids: [7, 3] }
+      });
+
+      store.addIoTrace({
+        source: "mcp",
+        op: "r_context",
+        req: { q: "auth", fc: 3 },
+        res: { chars: 512 }
+      });
+
+      const all = store.listIoTrace({ source: "mcp", limit: 10 });
+      expect(all).toHaveLength(2);
+      expect(all[0]?.source).toBe("mcp");
+      expect(all[0]?.req.startsWith("{")).toBe(true);
+      expect(all[0]?.res.startsWith("{")).toBe(true);
+
+      const filtered = store.listIoTrace({ source: "mcp", op: "q_search", limit: 10 });
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0]?.op).toBe("q_search");
+      expect(filtered[0]?.req).toContain("\"q\":\"auth\"");
+    });
+  });
 });

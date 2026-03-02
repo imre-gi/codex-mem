@@ -1,6 +1,7 @@
 import type {
   AddObservationInput,
   AddSummaryInput,
+  ListIoTraceOptions,
   SearchOptions,
   TimelineOptions,
 } from "./types.js";
@@ -13,9 +14,11 @@ interface WorkerResponse<T> {
 
 export class MemoryServiceClient {
   private readonly baseUrl: string;
+  private readonly source: string;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, source = "api") {
     this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.source = source.trim() || "api";
   }
 
   async health(): Promise<Record<string, unknown>> {
@@ -56,12 +59,22 @@ export class MemoryServiceClient {
     return this.get("/api/memory/projects");
   }
 
+  async ioTrace(
+    input: ListIoTraceOptions,
+  ): Promise<{ total: number; events: unknown[] }> {
+    return this.post("/api/memory/io-trace", input as unknown);
+  }
+
   async shutdown(): Promise<Record<string, unknown>> {
     return this.post("/api/admin/shutdown", {});
   }
 
   private async get<T>(path: string): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`);
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      headers: {
+        "x-retentia-source": this.source,
+      },
+    });
     const payload = (await response.json()) as WorkerResponse<T>;
     if (!response.ok || !payload.ok) {
       throw new Error(
@@ -77,6 +90,7 @@ export class MemoryServiceClient {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        "x-retentia-source": this.source,
       },
       body: JSON.stringify(body),
     });

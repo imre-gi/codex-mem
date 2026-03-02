@@ -366,6 +366,54 @@ async function handleStoreCommand(
         return;
       }
 
+      case "io-trace": {
+        const events = store.listIoTrace({
+          source: getOptionalString(parsed.options.source),
+          op: getOptionalString(parsed.options.op) as
+            | "w_obs"
+            | "w_sum"
+            | "q_search"
+            | "q_timeline"
+            | "r_entries"
+            | "r_context"
+            | "r_projects"
+            | undefined,
+          since: getOptionalString(parsed.options.since),
+          until: getOptionalString(parsed.options.until),
+          limit: getOptionalNumber(parsed.options.limit),
+          offset: getOptionalNumber(parsed.options.offset)
+        });
+        printJson({
+          total: events.length,
+          events,
+          legend: {
+            ops: {
+              w_obs: "write observation",
+              w_sum: "write summary",
+              q_search: "search query",
+              q_timeline: "timeline query",
+              r_entries: "read entries by ids",
+              r_context: "read context pack",
+              r_projects: "read projects"
+            },
+            compactKeys: {
+              p: "project",
+              sid: "sessionId",
+              ek: "externalKey",
+              q: "query",
+              k: "kind",
+              l: "limit",
+              o: "offset",
+              n: "count",
+              ids: "entry ids",
+              at: "createdAt",
+              chars: "context character length"
+            }
+          }
+        });
+        return;
+      }
+
       case "execution-report": {
         const entries = store.listEntries({
           project: getOptionalString(parsed.options.project),
@@ -523,6 +571,7 @@ function printHelp(): void {
     `  ${APP_NAME} context [--query <text>] [--full-count <n>]`,
     `  ${APP_NAME} list-projects`,
     `  ${APP_NAME} list-entries [--project <name>] [--kind <observation|summary>] [--limit <n>] [--offset <n>]`,
+    `  ${APP_NAME} io-trace [--source <mcp|api|...>] [--op <w_obs|w_sum|q_search|q_timeline|r_entries|r_context|r_projects>] [--limit <n>]`,
     `  ${APP_NAME} execution-report [--project <name>] [--limit <n>] [--offset <n>]`,
     "",
     "Global options:",
