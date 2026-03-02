@@ -4,6 +4,20 @@ This extension adds Codex Mem commands to VS Code and runs the `codex-mem` CLI b
 
 ## Install
 
+### One-command install (from repo root, recommended)
+
+```bash
+cd /home/imre/Development/codex-mem
+npm run install:vscode
+```
+
+For a clean reinstall from scratch:
+
+```bash
+cd /home/imre/Development/codex-mem
+npm run reinstall:vscode
+```
+
 ### Development Host
 
 ```bash
@@ -31,6 +45,7 @@ code --install-extension codex-mem-vscode-0.1.1.vsix
 - `Codex Mem: Start Worker`
 - `Codex Mem: Stop Worker`
 - `Codex Mem: Worker Status`
+- `Codex Mem: Status Dashboard`
 - `Codex Mem: Open Settings`
 - `Codex Mem: Initialize Store`
 - `Codex Mem: Add Observation`
@@ -59,9 +74,10 @@ The extension resolves CLI in this order:
 ## First Run Checklist
 
 1. Run `Codex Mem: Setup (Enable + Start Worker)`
-2. Run `Codex Mem: Open Settings` (optional, to set `codexMem.cliPath`)
-3. Confirm `Codex Mem: Worker Status` returns `running: true`
-4. In terminal, verify MCP registration:
+2. Run `Codex Mem: Status Dashboard`
+3. Run `Codex Mem: Open Settings` (optional, to set `codexMem.cliPath`)
+4. Confirm `Codex Mem: Worker Status` returns `running: true`
+5. In terminal, verify MCP registration:
 
 ```bash
 codex mcp get codex-mem
@@ -71,6 +87,11 @@ If CLI lookup fails, set `codexMem.cliPath` to:
 
 - `/home/imre/Development/codex-mem/dist/cli.js`, or
 - a globally available `codex-mem` binary.
+
+If commands are missing in `Ctrl+Shift+P`, run:
+
+1. `Developer: Reload Window`
+2. search for `Codex Mem` (with space)
 
 ## Development
 

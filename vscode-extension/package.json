@@ -19,6 +19,7 @@
     "onCommand:codexMem.startWorker",
     "onCommand:codexMem.stopWorker",
     "onCommand:codexMem.workerStatus",
+    "onCommand:codexMem.statusDashboard",
     "onCommand:codexMem.openSettings",
     "onCommand:codexMem.addObservation",
     "onCommand:codexMem.addSummary",
@@ -52,6 +53,10 @@
       {
         "command": "codexMem.workerStatus",
         "title": "Codex Mem: Worker Status"
+      },
+      {
+        "command": "codexMem.statusDashboard",
+        "title": "Codex Mem: Status Dashboard"
       },
       {
         "command": "codexMem.openSettings",
@@ -96,7 +101,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "package": "vsce package --allow-missing-repository",
+    "package": "npm run build && vsce package --allow-missing-repository",
     "install:local": "npm run uninstall:local || true && npm run package && code --install-extension codex-mem-vscode-$npm_package_version.vsix --force",
     "uninstall:local": "code --uninstall-extension local.codex-mem-vscode"
   },

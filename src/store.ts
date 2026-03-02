@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import type {
   AddObservationInput,
   AddSummaryInput,
+  MemoryKpis,
   MemoryEntry,
   ObservationEntry,
   SearchOptions,
@@ -36,6 +37,15 @@ interface EntryRow {
   next_steps: string | null;
   files_read_json: string | null;
   files_edited_json: string | null;
+}
+
+interface KpiRow {
+  entries_total: number;
+  observations_total: number | null;
+  summaries_total: number | null;
+  projects_total: number;
+  latest_entry_at: string | null;
+  oldest_entry_at: string | null;
 }
 
 export class MemoryStore {
@@ -261,6 +271,32 @@ export class MemoryStore {
       .prepare("SELECT DISTINCT project FROM entries ORDER BY project ASC")
       .all() as Array<{ project: string }>;
     return rows.map((row) => row.project);
+  }
+
+  getKpis(): MemoryKpis {
+    const row = this.db
+      .prepare(
+        `
+      SELECT
+        COUNT(*) AS entries_total,
+        SUM(CASE WHEN kind = 'observation' THEN 1 ELSE 0 END) AS observations_total,
+        SUM(CASE WHEN kind = 'summary' THEN 1 ELSE 0 END) AS summaries_total,
+        COUNT(DISTINCT project) AS projects_total,
+        MAX(created_at) AS latest_entry_at,
+        MIN(created_at) AS oldest_entry_at
+      FROM entries
+    `
+      )
+      .get() as KpiRow | undefined;
+
+    return {
+      entriesTotal: Number(row?.entries_total || 0),
+      observationsTotal: Number(row?.observations_total || 0),
+      summariesTotal: Number(row?.summaries_total || 0),
+      projectsTotal: Number(row?.projects_total || 0),
+      latestEntryAt: row?.latest_entry_at || undefined,
+      oldestEntryAt: row?.oldest_entry_at || undefined
+    };
   }
 
   private initializeSchema(): void {

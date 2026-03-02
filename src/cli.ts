@@ -235,6 +235,16 @@ async function handleStoreCommand(
         return;
       }
 
+      case "kpis": {
+        printJson({
+          ok: true,
+          dataFile: store.getDataFilePath(),
+          worker: await manager.status(),
+          kpis: store.getKpis()
+        });
+        return;
+      }
+
       case "add-observation": {
         const title = getRequiredString(parsed.options.title, "--title");
         const content = getRequiredString(parsed.options.content, "--content");
@@ -420,6 +430,7 @@ function printHelp(): void {
     "  codex-mem mcp [--host <host>] [--port <port>] [--data-file <path>]",
     "  codex-mem worker <start|stop|restart|status|run> [--host <host>] [--port <port>] [--data-file <path>]",
     "  codex-mem init [--data-file <path>]",
+    "  codex-mem kpis [--data-file <path>] [--host <host>] [--port <port>]",
     "  codex-mem add-observation --title <text> --content <text> [--type <bugfix|feature|...>]",
     "  codex-mem add-summary --learned <text> [--request <text>] [--next-steps <text>]",
     "  codex-mem search [--query <text>] [--project <name>] [--kind <observation|summary>]",

@@ -99,3 +99,12 @@ export interface TimelineResult {
   anchorId: number;
   entries: MemoryEntry[];
 }
+
+export interface MemoryKpis {
+  entriesTotal: number;
+  observationsTotal: number;
+  summariesTotal: number;
+  projectsTotal: number;
+  latestEntryAt?: string;
+  oldestEntryAt?: string;
+}

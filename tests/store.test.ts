@@ -88,4 +88,26 @@ describe("MemoryStore", () => {
       expect(pack).toContain("Optimize build");
     });
   });
+
+  test("returns aggregate kpis", () => {
+    withStore((store) => {
+      store.addObservation({
+        title: "Fix flaky e2e login",
+        content: "Retried auth callback flow and captured debug details"
+      });
+      store.addSummary({
+        request: "weekly recap",
+        learned: "worker uptime dropped during terminal restart",
+        completed: "added health check smoke step"
+      });
+
+      const kpis = store.getKpis();
+      expect(kpis.entriesTotal).toBe(2);
+      expect(kpis.observationsTotal).toBe(1);
+      expect(kpis.summariesTotal).toBe(1);
+      expect(kpis.projectsTotal).toBe(1);
+      expect(kpis.latestEntryAt).toBeTruthy();
+      expect(kpis.oldestEntryAt).toBeTruthy();
+    });
+  });
 });

@@ -59,6 +59,14 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("codexMem.statusDashboard", async () => {
+      const status = await runCliJson(["kpis"]);
+      const markdown = buildStatusDashboard(status);
+      await openTextDocument(markdown, "markdown", "codex-mem-status-dashboard.md");
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.openSettings", async () => {
       await vscode.commands.executeCommand(
         "workbench.action.openSettings",
@@ -443,4 +451,88 @@ async function openTextDocument(
   });
 
   await vscode.window.showTextDocument(document, { preview: false });
+}
+
+function buildStatusDashboard(payload: JsonResult): string {
+  const root = toRecord(payload);
+  const worker = toRecord(root.worker);
+  const kpis = toRecord(root.kpis);
+
+  const running = toBoolean(worker.running);
+  const workerLabel = running ? "running" : "stopped";
+  const dataFile = toText(root.dataFile) || toText(worker.dataFile) || "n/a";
+  const generatedAt = new Date().toLocaleString();
+
+  const lines = [
+    "# Codex Mem Status Dashboard",
+    "",
+    `Generated: ${generatedAt}`,
+    "",
+    "## Worker",
+    `- State: ${workerLabel}`,
+    `- PID: ${toNumber(worker.pid) ?? "n/a"}`,
+    `- Uptime: ${formatUptime(toNumber(worker.uptimeSeconds))}`,
+    `- Endpoint: ${toText(worker.baseUrl) || "n/a"}`,
+    `- Host: ${toText(worker.host) || "n/a"}`,
+    `- Port: ${toNumber(worker.port) ?? "n/a"}`,
+    "",
+    "## Memory KPIs",
+    `- Total entries: ${toNumber(kpis.entriesTotal) ?? 0}`,
+    `- Observations: ${toNumber(kpis.observationsTotal) ?? 0}`,
+    `- Summaries: ${toNumber(kpis.summariesTotal) ?? 0}`,
+    `- Projects: ${toNumber(kpis.projectsTotal) ?? 0}`,
+    `- Latest entry: ${formatIso(toText(kpis.latestEntryAt))}`,
+    `- Oldest entry: ${formatIso(toText(kpis.oldestEntryAt))}`,
+    "",
+    "## Storage",
+    `- DB file: ${dataFile}`
+  ];
+
+  return lines.join("\n");
+}
+
+function toRecord(value: unknown): JsonResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as JsonResult;
+}
+
+function toText(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function toBoolean(value: unknown): boolean {
+  return value === true;
+}
+
+function toNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return undefined;
+}
+
+function formatUptime(seconds: number | undefined): string {
+  if (seconds === undefined) {
+    return "n/a";
+  }
+
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  return `${hours}h ${minutes}m ${remainingSeconds}s`;
+}
+
+function formatIso(value: string | undefined): string {
+  if (!value) {
+    return "n/a";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return `${date.toLocaleString()} (${value})`;
 }

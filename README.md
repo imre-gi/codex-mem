@@ -77,15 +77,25 @@ codex-mem/
 
 ```bash
 cd /home/imre/Development/codex-mem
-npm install
-npm run setup
+npm run install:vscode
 ```
 
-`npm run setup` does:
+`npm run install:vscode` does:
 
-1. build (`npm run build`)
-2. one-time MCP registration (`node dist/cli.js setup`)
-3. worker startup
+1. install root dependencies
+2. install `vscode-extension` dependencies
+3. build `codex-mem`
+4. package/install local VS Code extension
+5. one-time MCP registration + worker startup (`node dist/cli.js setup`)
+
+For a fully clean reinstall:
+
+```bash
+cd /home/imre/Development/codex-mem
+npm run reinstall:vscode
+```
+
+This removes prior local codex-mem extension + MCP config entries, then performs the full install again.
 
 ## Getting Started (New Machine)
 
@@ -97,8 +107,7 @@ If this is a fresh install and you want the fastest path to working MCP memory:
 
 ```bash
 cd /home/imre/Development/codex-mem
-npm install
-npm run setup
+npm run install:vscode
 ```
 
 4. Verify:
@@ -106,6 +115,7 @@ npm run setup
 ```bash
 codex mcp get codex-mem
 node dist/cli.js worker status
+node dist/cli.js kpis
 ```
 
 5. Run Codex normally:
@@ -163,6 +173,7 @@ node dist/cli.js add-observation \
 ```bash
 node dist/cli.js search --query auth
 node dist/cli.js context --query auth --full-count 3
+node dist/cli.js kpis
 ```
 
 ### 5. Stop worker
@@ -268,6 +279,7 @@ Worker PID file:
 - `mcp`
 - `worker start|stop|restart|status|run`
 - `init`
+- `kpis`
 - `add-observation`
 - `add-summary`
 - `search`
@@ -299,6 +311,18 @@ node dist/cli.js init
 ```
 
 Returns DB path and current worker status.
+
+### `kpis`
+
+```bash
+node dist/cli.js kpis
+```
+
+Returns:
+
+- worker status (`running`, `pid`, `uptimeSeconds`, endpoint)
+- aggregate memory totals (`entriesTotal`, `observationsTotal`, `summariesTotal`, `projectsTotal`)
+- oldest/latest entry timestamps
 
 ### `enable`
 
@@ -473,12 +497,12 @@ From repo root:
 
 ```bash
 cd /home/imre/Development/codex-mem
-npm install
-npm run vscode:install
+npm run install:vscode
 ```
 
 Then restart VS Code and run:
 
+- `Codex Mem: Status Dashboard`
 - `Codex Mem: Open Settings`
 - `Codex Mem: Setup (Enable + Start Worker)`
 
@@ -502,6 +526,7 @@ Run extension dev host:
    - `Codex Mem: Start Worker`
    - `Codex Mem: Stop Worker`
    - `Codex Mem: Worker Status`
+   - `Codex Mem: Status Dashboard`
    - `Codex Mem: Open Settings`
    - `Codex Mem: Initialize Store`
    - `Codex Mem: Add Observation`
@@ -523,6 +548,11 @@ code --install-extension codex-mem-vscode-0.1.1.vsix
 After installing, run command palette action:
 
 - `Codex Mem: Setup (Enable + Start Worker)`
+- `Codex Mem: Status Dashboard`
+
+Search tip:
+
+- use `Ctrl+Shift+P` and type `Codex Mem` (with a space, not `codex-mem`)
 
 Extension settings:
 
@@ -573,6 +603,21 @@ Set `codexMem.cliPath` to:
 
 - `/home/imre/Development/codex-mem/dist/cli.js` (script path), or
 - `codex-mem` (if linked/global)
+
+### `Codex Mem` commands do not appear in Command Palette
+
+Run a clean reinstall:
+
+```bash
+cd /home/imre/Development/codex-mem
+npm run reinstall:vscode
+```
+
+Then in VS Code:
+
+1. run `Developer: Reload Window`
+2. open `Ctrl+Shift+P`
+3. search `Codex Mem`
 
 ### VS Code extension commands run, but Codex still has no memory tools
 
