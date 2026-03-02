@@ -1,0 +1,74 @@
+{
+  "name": "codex-mem-vscode",
+  "displayName": "Codex Mem",
+  "description": "Persistent memory commands for codex-mem inside VS Code",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:codexMem.initStore",
+    "onCommand:codexMem.addObservation",
+    "onCommand:codexMem.addSummary",
+    "onCommand:codexMem.search",
+    "onCommand:codexMem.contextPack",
+    "onCommand:codexMem.openMemoryFile"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codexMem.initStore",
+        "title": "Codex Mem: Initialize Store"
+      },
+      {
+        "command": "codexMem.addObservation",
+        "title": "Codex Mem: Add Observation"
+      },
+      {
+        "command": "codexMem.addSummary",
+        "title": "Codex Mem: Add Summary"
+      },
+      {
+        "command": "codexMem.search",
+        "title": "Codex Mem: Search Memory"
+      },
+      {
+        "command": "codexMem.contextPack",
+        "title": "Codex Mem: Generate Context Pack"
+      },
+      {
+        "command": "codexMem.openMemoryFile",
+        "title": "Codex Mem: Open Memory File"
+      }
+    ],
+    "configuration": {
+      "title": "Codex Mem",
+      "properties": {
+        "codexMem.cliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to codex-mem CLI binary or dist/cli.js file. Leave empty for auto-detection."
+        },
+        "codexMem.defaultProject": {
+          "type": "string",
+          "default": "",
+          "description": "Optional default project name to use when adding entries from VS Code."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.9.3"
+  }
+}

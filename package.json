@@ -1,0 +1,41 @@
+{
+  "name": "codex-mem",
+  "version": "0.1.0",
+  "description": "Persistent project memory MCP plugin for OpenAI Codex",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "codex-mem": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "dev": "tsx src/cli.ts mcp",
+    "start": "node dist/cli.js mcp"
+  },
+  "keywords": [
+    "codex",
+    "mcp",
+    "memory",
+    "plugin"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
