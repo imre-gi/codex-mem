@@ -110,4 +110,32 @@ describe("MemoryStore", () => {
       expect(kpis.oldestEntryAt).toBeTruthy();
     });
   });
+
+  test("supports external key dedupe checks and listEntries", () => {
+    withStore((store) => {
+      const saved = store.addObservation({
+        title: "Codex pipeline task finished",
+        content: "Imported from codex sessions",
+        project: "fred-client",
+        externalKey: "codex:turn-123",
+        tags: ["provider:codex", "agent:backend"]
+      });
+
+      expect(saved.externalKey).toBe("codex:turn-123");
+      expect(store.hasExternalKey("codex:turn-123")).toBe(true);
+      expect(store.hasExternalKey("codex:missing")).toBe(false);
+
+      store.addSummary({
+        project: "fred-client",
+        learned: "pipeline reviewed successfully"
+      });
+
+      const listed = store.listEntries({
+        project: "fred-client",
+        limit: 5
+      });
+      expect(listed).toHaveLength(2);
+      expect(listed[0]?.createdAt >= listed[1]?.createdAt).toBe(true);
+    });
+  });
 });

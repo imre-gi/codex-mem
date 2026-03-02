@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import type {
   AddObservationInput,
   AddSummaryInput,
+  ListEntriesOptions,
   MemoryKpis,
   MemoryEntry,
   ObservationEntry,
@@ -17,13 +18,15 @@ import type {
 
 const DEFAULT_DATA_DIR = join(homedir(), ".codex-mem");
 const DEFAULT_DB_FILE = join(DEFAULT_DATA_DIR, "codex-mem.db");
-const MAX_LIMIT = 100;
+const MAX_SEARCH_LIMIT = 100;
+const MAX_LIST_LIMIT = 2000;
 
 interface EntryRow {
   id: number;
   kind: "observation" | "summary";
   project: string;
   session_id: string | null;
+  external_key: string | null;
   created_at: string;
   tags_json: string;
   observation_type: string | null;
@@ -82,6 +85,7 @@ export class MemoryStore {
     const createdAt = new Date().toISOString();
     const project = this.resolveProject(input.project);
     const sessionId = this.cleanOptional(input.sessionId) || null;
+    const externalKey = this.cleanOptional(input.externalKey) || null;
     const tags = this.cleanList(input.tags);
     const files = this.cleanList(input.files);
 
@@ -92,19 +96,21 @@ export class MemoryStore {
         kind,
         project,
         session_id,
+        external_key,
         created_at,
         tags_json,
         observation_type,
         title,
         content,
         files_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
       )
       .run(
         "observation",
         project,
         sessionId,
+        externalKey,
         createdAt,
         JSON.stringify(tags),
         input.observationType || "note",
@@ -118,6 +124,7 @@ export class MemoryStore {
       kind: "observation",
       project,
       sessionId: sessionId || undefined,
+      externalKey: externalKey || undefined,
       createdAt,
       tags,
       observationType: (input.observationType || "note") as ObservationEntry["observationType"],
@@ -131,6 +138,7 @@ export class MemoryStore {
     const createdAt = new Date().toISOString();
     const project = this.resolveProject(input.project);
     const sessionId = this.cleanOptional(input.sessionId) || null;
+    const externalKey = this.cleanOptional(input.externalKey) || null;
     const tags = this.cleanList(input.tags);
     const filesRead = this.cleanList(input.filesRead);
     const filesEdited = this.cleanList(input.filesEdited);
@@ -148,6 +156,7 @@ export class MemoryStore {
         kind,
         project,
         session_id,
+        external_key,
         created_at,
         tags_json,
         request,
@@ -157,13 +166,14 @@ export class MemoryStore {
         next_steps,
         files_read_json,
         files_edited_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
       )
       .run(
         "summary",
         project,
         sessionId,
+        externalKey,
         createdAt,
         JSON.stringify(tags),
         request,
@@ -180,6 +190,7 @@ export class MemoryStore {
       kind: "summary",
       project,
       sessionId: sessionId || undefined,
+      externalKey: externalKey || undefined,
       createdAt,
       tags,
       request,
@@ -208,8 +219,56 @@ export class MemoryStore {
       .filter((entry): entry is MemoryEntry => Boolean(entry));
   }
 
+  listEntries(options: ListEntriesOptions = {}): MemoryEntry[] {
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (options.project) {
+      clauses.push("project = ?");
+      params.push(options.project);
+    }
+
+    if (options.kind) {
+      clauses.push("kind = ?");
+      params.push(options.kind);
+    }
+
+    if (options.since) {
+      clauses.push("created_at >= ?");
+      params.push(options.since);
+    }
+
+    if (options.until) {
+      clauses.push("created_at <= ?");
+      params.push(options.until);
+    }
+
+    const limit = this.resolveListLimit(options.limit);
+    const offset = this.resolveOffset(options.offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM entries ${whereClause} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
+      )
+      .all(...params, limit, offset) as EntryRow[];
+
+    return rows.map((row) => this.mapRow(row));
+  }
+
+  hasExternalKey(externalKey: string): boolean {
+    const normalized = this.cleanOptional(externalKey);
+    if (!normalized) {
+      return false;
+    }
+
+    const row = this.db
+      .prepare("SELECT id FROM entries WHERE external_key = ? LIMIT 1")
+      .get(normalized) as { id: number } | undefined;
+    return Boolean(row?.id);
+  }
+
   search(options: SearchOptions): SearchResult[] {
-    const limit = this.resolveLimit(options.limit);
+    const limit = this.resolveSearchLimit(options.limit);
     const tokens = this.tokenize(options.query);
     const rows = this.fetchFilteredRows(options);
 
@@ -306,6 +365,7 @@ export class MemoryStore {
         kind TEXT NOT NULL CHECK (kind IN ('observation', 'summary')),
         project TEXT NOT NULL,
         session_id TEXT,
+        external_key TEXT,
         created_at TEXT NOT NULL,
         tags_json TEXT NOT NULL,
         observation_type TEXT,
@@ -324,6 +384,13 @@ export class MemoryStore {
       CREATE INDEX IF NOT EXISTS idx_entries_project ON entries(project);
       CREATE INDEX IF NOT EXISTS idx_entries_kind ON entries(kind);
       CREATE INDEX IF NOT EXISTS idx_entries_created ON entries(created_at DESC);
+    `);
+
+    this.ensureColumnExists("external_key", "TEXT");
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_external_key_unique
+        ON entries(external_key)
+        WHERE external_key IS NOT NULL;
     `);
   }
 
@@ -366,6 +433,7 @@ export class MemoryStore {
         kind: "observation",
         project: row.project,
         sessionId: row.session_id || undefined,
+        externalKey: row.external_key || undefined,
         createdAt: row.created_at,
         tags,
         observationType: (row.observation_type || "note") as ObservationEntry["observationType"],
@@ -380,6 +448,7 @@ export class MemoryStore {
       kind: "summary",
       project: row.project,
       sessionId: row.session_id || undefined,
+      externalKey: row.external_key || undefined,
       createdAt: row.created_at,
       tags,
       request: row.request || "",
@@ -409,6 +478,16 @@ export class MemoryStore {
         .filter(Boolean);
     } catch {
       return [];
+    }
+  }
+
+  private ensureColumnExists(columnName: string, columnTypeSql: string): void {
+    const tableInfo = this.db
+      .prepare("PRAGMA table_info(entries)")
+      .all() as Array<{ name: string }>;
+    const hasColumn = tableInfo.some((column) => column.name === columnName);
+    if (!hasColumn) {
+      this.db.exec(`ALTER TABLE entries ADD COLUMN ${columnName} ${columnTypeSql};`);
     }
   }
 
@@ -451,12 +530,28 @@ export class MemoryStore {
     return normalized;
   }
 
-  private resolveLimit(limit?: number): number {
+  private resolveSearchLimit(limit?: number): number {
     if (!limit || Number.isNaN(limit)) {
       return 10;
     }
 
-    return Math.max(1, Math.min(limit, MAX_LIMIT));
+    return Math.max(1, Math.min(limit, MAX_SEARCH_LIMIT));
+  }
+
+  private resolveListLimit(limit?: number): number {
+    if (!limit || Number.isNaN(limit)) {
+      return 250;
+    }
+
+    return Math.max(1, Math.min(limit, MAX_LIST_LIMIT));
+  }
+
+  private resolveOffset(offset?: number): number {
+    if (offset === undefined || Number.isNaN(offset)) {
+      return 0;
+    }
+
+    return Math.max(0, Math.floor(offset));
   }
 
   private resolveWindow(value: number | undefined, fallback: number): number {

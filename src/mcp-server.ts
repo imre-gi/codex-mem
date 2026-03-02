@@ -66,6 +66,7 @@ export async function startMcpServer(
           properties: {
             project: { type: "string" },
             sessionId: { type: "string" },
+            externalKey: { type: "string" },
             observationType: {
               type: "string",
               enum: OBSERVATION_TYPES
@@ -93,6 +94,7 @@ export async function startMcpServer(
           properties: {
             project: { type: "string" },
             sessionId: { type: "string" },
+            externalKey: { type: "string" },
             request: { type: "string" },
             investigated: { type: "string" },
             learned: { type: "string" },
@@ -226,6 +228,7 @@ async function handleToolCall(
         const saved = await client.addObservation({
           project: getString(args, "project", false) || undefined,
           sessionId: getString(args, "sessionId", false) || undefined,
+          externalKey: getString(args, "externalKey", false) || undefined,
           observationType,
           title,
           content,
@@ -241,6 +244,7 @@ async function handleToolCall(
         const saved = await client.addSummary({
           project: getString(args, "project", false) || undefined,
           sessionId: getString(args, "sessionId", false) || undefined,
+          externalKey: getString(args, "externalKey", false) || undefined,
           request: getString(args, "request", false) || undefined,
           investigated: getString(args, "investigated", false) || undefined,
           learned,

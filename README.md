@@ -44,6 +44,8 @@ Persistent memory for OpenAI Codex with a lightweight local worker service and S
 - Worker lifecycle (`worker start|stop|restart|status|run`)
 - Direct local operations (`add-observation`, `search`, etc.)
 - `mcp` command auto-starts worker and runs MCP server
+- Multi-LLM task ingestion (`sync-tasks`) for Codex, Claude, Qwen, Gwen logs
+- Execution analytics output (`execution-report`) for dashboard visualizers
 
 ## Repository Layout
 
@@ -183,6 +185,8 @@ node dist/cli.js add-observation \
 node dist/cli.js search --query auth
 node dist/cli.js context --query auth --full-count 3
 node dist/cli.js kpis
+node dist/cli.js sync-tasks --providers all
+node dist/cli.js execution-report --limit 600
 ```
 
 ### 5. Stop worker
@@ -296,6 +300,9 @@ Worker PID file:
 - `get`
 - `context`
 - `list-projects`
+- `list-entries`
+- `execution-report`
+- `sync-tasks`
 - `help`
 
 ### `setup`
@@ -388,6 +395,53 @@ Optional:
 - `--files-read <comma,separated>`
 - `--files-edited <comma,separated>`
 
+### `sync-tasks`
+
+Import task-execution events from local LLM session logs into codex-mem observations.
+
+```bash
+node dist/cli.js sync-tasks --providers all
+```
+
+Optional:
+
+- `--providers <codex,claude,qwen,gwen|all>`
+- `--codex-path <path>`
+- `--claude-path <path>`
+- `--qwen-path <path>`
+- `--gwen-path <path>`
+- `--lookback-days <n>`
+- `--max-files <n>`
+- `--max-import <n>`
+- `--project <fallback-name>`
+
+### `list-entries`
+
+```bash
+node dist/cli.js list-entries --project Fred-Client --limit 200
+```
+
+Optional:
+
+- `--project <name>`
+- `--kind <observation|summary>`
+- `--since <ISO-8601>`
+- `--until <ISO-8601>`
+- `--limit <n>`
+- `--offset <n>`
+
+### `execution-report`
+
+Builds analytics-ready data for project explorer and task execution visualizations.
+
+```bash
+node dist/cli.js execution-report --limit 600
+```
+
+Optional:
+
+- same filters as `list-entries`
+
 ### `search`
 
 Optional:
@@ -439,12 +493,12 @@ node dist/cli.js context --query "oauth" --full-count 3
 `mem_add_observation`
 
 - required: `title`, `content`
-- optional: `project`, `sessionId`, `observationType`, `tags[]`, `files[]`
+- optional: `project`, `sessionId`, `externalKey`, `observationType`, `tags[]`, `files[]`
 
 `mem_add_summary`
 
 - required: `learned`
-- optional: `project`, `sessionId`, `request`, `investigated`, `completed`, `nextSteps`, `tags[]`, `filesRead[]`, `filesEdited[]`
+- optional: `project`, `sessionId`, `externalKey`, `request`, `investigated`, `completed`, `nextSteps`, `tags[]`, `filesRead[]`, `filesEdited[]`
 
 `mem_search`
 
@@ -535,8 +589,9 @@ Run extension dev host:
    - `Codex Mem: Start Worker`
    - `Codex Mem: Stop Worker`
    - `Codex Mem: Worker Status`
-   - `Codex Mem: Sync Codex Tasks`
+   - `Codex Mem: Sync LLM Tasks (Codex/Claude/Qwen/Gwen)`
    - `Codex Mem: Status Dashboard`
+   - `Codex Mem: Project Explorer + Visualizer`
    - `Codex Mem: Open Settings`
    - `Codex Mem: Initialize Store`
    - `Codex Mem: Add Observation`
@@ -570,17 +625,25 @@ Dashboard includes:
 - MCP config status
 - KPI cards (entries, observations, summaries, projects)
 - recent memory task executions
-- Codex task ingestion metrics (detected/imported/skipped/errors)
-- action buttons (`Refresh`, `Setup`, `Sync Codex Tasks`, `Start Worker`, `Stop Worker`)
+- provider sync metrics (detected/imported/skipped/errors)
+- execution visualizer (provider/model/agent/status)
+- project explorer and task table filters
+- action buttons (`Refresh`, `Setup`, `Sync LLM Tasks`, `Start Worker`, `Stop Worker`)
 
 Extension settings:
 
 - `codexMem.cliPath`
 - `codexMem.defaultProject`
+- `codexMem.enabledProviders`
 - `codexMem.autoSyncCodexTasks`
 - `codexMem.autoSyncLookbackDays`
 - `codexMem.autoSyncMaxImport`
+- `codexMem.autoSyncMaxFiles`
 - `codexMem.codexSessionsPath`
+- `codexMem.claudeSessionsPath`
+- `codexMem.qwenSessionsPath`
+- `codexMem.gwenSessionsPath`
+- `codexMem.executionReportLimit`
 
 CLI auto-detection checks these paths in order (before falling back to `codex-mem` on PATH):
 
@@ -668,12 +731,12 @@ node dist/cli.js setup
 
 What this means:
 
-- Codex tasks completed, but no `mem_add_*` writes were made yet.
+- LLM tasks completed, but no `mem_add_*` writes were made yet.
 
 How this is handled now:
 
-- The VS Code extension can auto-import recent Codex `task_complete` session events into codex-mem observations.
-- You can trigger this immediately with `Codex Mem: Sync Codex Tasks`.
+- The VS Code extension can auto-import task execution events from enabled providers (Codex/Claude/Qwen/Gwen) into codex-mem observations.
+- You can trigger this immediately with `Codex Mem: Sync LLM Tasks (Codex/Claude/Qwen/Gwen)`.
 - Dashboard runtime panel shows ingestion counters so you can verify import activity.
 
 ### Node version errors

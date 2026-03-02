@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { buildContextPack } from "./context-pack.js";
+import { buildExecutionReport } from "./execution-report.js";
 import { startMcpServer } from "./mcp-server.js";
 import { MemoryStore } from "./store.js";
+import { syncTaskExecutions, type LlmProvider } from "./task-sync.js";
 import { startWorkerService } from "./worker-service.js";
 import { WorkerManager } from "./worker-manager.js";
 import {
@@ -251,6 +253,7 @@ async function handleStoreCommand(
         const saved = store.addObservation({
           project: getOptionalString(parsed.options.project),
           sessionId: getOptionalString(parsed.options["session-id"]),
+          externalKey: getOptionalString(parsed.options["external-key"]),
           observationType: getOptionalString(parsed.options.type) as
             | "bugfix"
             | "feature"
@@ -274,6 +277,7 @@ async function handleStoreCommand(
         const saved = store.addSummary({
           project: getOptionalString(parsed.options.project),
           sessionId: getOptionalString(parsed.options["session-id"]),
+          externalKey: getOptionalString(parsed.options["external-key"]),
           request: getOptionalString(parsed.options.request),
           investigated: getOptionalString(parsed.options.investigated),
           learned,
@@ -341,6 +345,58 @@ async function handleStoreCommand(
       case "list-projects":
         printJson({ projects: store.listProjects() });
         return;
+
+      case "list-entries": {
+        const entries = store.listEntries({
+          project: getOptionalString(parsed.options.project),
+          kind: getOptionalString(parsed.options.kind) as
+            | "observation"
+            | "summary"
+            | undefined,
+          since: getOptionalString(parsed.options.since),
+          until: getOptionalString(parsed.options.until),
+          limit: getOptionalNumber(parsed.options.limit),
+          offset: getOptionalNumber(parsed.options.offset)
+        });
+        printJson({ total: entries.length, entries });
+        return;
+      }
+
+      case "execution-report": {
+        const entries = store.listEntries({
+          project: getOptionalString(parsed.options.project),
+          kind: getOptionalString(parsed.options.kind) as
+            | "observation"
+            | "summary"
+            | undefined,
+          since: getOptionalString(parsed.options.since),
+          until: getOptionalString(parsed.options.until),
+          limit: getOptionalNumber(parsed.options.limit),
+          offset: getOptionalNumber(parsed.options.offset)
+        });
+        const report = buildExecutionReport(entries);
+        printJson(report);
+        return;
+      }
+
+      case "sync-tasks": {
+        const rawProviders = getCsvList(parsed.options.providers);
+        const providers = normalizeProviders(rawProviders);
+        const result = syncTaskExecutions(store, {
+          providers,
+          codexPath: getOptionalString(parsed.options["codex-path"]),
+          claudePath: getOptionalString(parsed.options["claude-path"]),
+          qwenPath: getOptionalString(parsed.options["qwen-path"]),
+          gwenPath: getOptionalString(parsed.options["gwen-path"]),
+          lookbackDays: getOptionalNumber(parsed.options["lookback-days"]),
+          maxFilesPerProvider: getOptionalNumber(parsed.options["max-files"]),
+          maxImport: getOptionalNumber(parsed.options["max-import"]),
+          fallbackProject:
+            getOptionalString(parsed.options.project) || basenameSafe(process.cwd())
+        });
+        printJson(result);
+        return;
+      }
 
       default:
         throw new Error(`Unknown command: ${command}`);
@@ -416,6 +472,29 @@ function getCsvList(value: string | boolean | undefined): string[] {
     .filter(Boolean);
 }
 
+function normalizeProviders(rawProviders: string[]): LlmProvider[] {
+  if (rawProviders.length === 0) {
+    return ["codex", "claude", "qwen", "gwen"];
+  }
+
+  const expanded = rawProviders
+    .flatMap((value) => value.trim().toLowerCase())
+    .flatMap((value) =>
+      value === "all" ? ["codex", "claude", "qwen", "gwen"] : [value]
+    );
+  const allowed = new Set<LlmProvider>(["codex", "claude", "qwen", "gwen"]);
+  const deduped = [...new Set(expanded)].filter((value): value is LlmProvider =>
+    allowed.has(value as LlmProvider)
+  );
+
+  return deduped.length > 0 ? deduped : ["codex", "claude", "qwen", "gwen"];
+}
+
+function basenameSafe(path: string): string {
+  const name = basename(path).trim();
+  return name || "project";
+}
+
 function printJson(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 }
@@ -433,11 +512,14 @@ function printHelp(): void {
     "  codex-mem kpis [--data-file <path>] [--host <host>] [--port <port>]",
     "  codex-mem add-observation --title <text> --content <text> [--type <bugfix|feature|...>]",
     "  codex-mem add-summary --learned <text> [--request <text>] [--next-steps <text>]",
+    "  codex-mem sync-tasks [--providers codex,claude,qwen,gwen|all] [--lookback-days <n>] [--max-import <n>]",
     "  codex-mem search [--query <text>] [--project <name>] [--kind <observation|summary>]",
     "  codex-mem timeline [--id <number> | --query <text>] [--before <n>] [--after <n>]",
     "  codex-mem get --ids 1,2,3",
     "  codex-mem context [--query <text>] [--full-count <n>]",
     "  codex-mem list-projects",
+    "  codex-mem list-entries [--project <name>] [--kind <observation|summary>] [--limit <n>] [--offset <n>]",
+    "  codex-mem execution-report [--project <name>] [--limit <n>] [--offset <n>]",
     "",
     "Global options:",
     "  --data-file <path>   Override SQLite DB path (default: ~/.codex-mem/codex-mem.db)",

@@ -53,8 +53,9 @@ code --install-extension codex-mem-vscode-0.1.1.vsix
 - `Codex Mem: Start Worker`
 - `Codex Mem: Stop Worker`
 - `Codex Mem: Worker Status`
-- `Codex Mem: Sync Codex Tasks`
+- `Codex Mem: Sync LLM Tasks (Codex/Claude/Qwen/Gwen)`
 - `Codex Mem: Status Dashboard`
+- `Codex Mem: Project Explorer + Visualizer`
 - `Codex Mem: Open Settings`
 - `Codex Mem: Initialize Store`
 - `Codex Mem: Add Observation`
@@ -67,10 +68,16 @@ code --install-extension codex-mem-vscode-0.1.1.vsix
 
 - `codexMem.cliPath`: optional explicit path to `codex-mem` binary or `dist/cli.js`.
 - `codexMem.defaultProject`: optional default project name.
-- `codexMem.autoSyncCodexTasks`: auto-import recent Codex `task_complete` events into memory when dashboard refreshes.
-- `codexMem.autoSyncLookbackDays`: how many recent days of Codex sessions are scanned.
+- `codexMem.autoSyncCodexTasks`: auto-sync task execution events when dashboard refreshes.
+- `codexMem.enabledProviders`: provider list for sync (`codex`, `claude`, `qwen`, `gwen`, or `all`).
+- `codexMem.autoSyncLookbackDays`: how many recent days of provider sessions are scanned.
 - `codexMem.autoSyncMaxImport`: max new tasks imported per sync run.
+- `codexMem.autoSyncMaxFiles`: max recent session files scanned per provider.
 - `codexMem.codexSessionsPath`: optional override for Codex sessions directory (default `~/.codex/sessions`).
+- `codexMem.claudeSessionsPath`: optional override for Claude sessions directory (default `~/.claude/projects`).
+- `codexMem.qwenSessionsPath`: optional override for Qwen sessions directory (default `~/.qwen/sessions`).
+- `codexMem.gwenSessionsPath`: optional override for Gwen sessions directory (default `~/.gwen/sessions`).
+- `codexMem.executionReportLimit`: max entries loaded for explorer/visualizer.
 
 ## CLI Discovery
 
@@ -116,9 +123,12 @@ Status Dashboard provides:
 
 - worker runtime state
 - MCP registration/config state
-- KPI totals
+- KPI totals (entries/projects/providers/agents)
 - recent memory task execution list
-- Codex task-ingestion status (detected/imported/skipped/errors)
+- provider sync matrix (detected/imported/skipped/failed)
+- execution visualizer (provider, model, agent, status distributions)
+- project explorer table with per-project task outcomes
+- task explorer filters (project/provider/agent/model/status)
 - action buttons for refresh/setup/sync/start/stop worker
 
 ## About "Tasks Executed"
@@ -126,8 +136,8 @@ Status Dashboard provides:
 The dashboard `Tasks Executed` KPI is backed by stored codex-mem entries.
 
 - If your agent does not call `mem_add_observation`/`mem_add_summary`, the KPI will stay `0`.
-- To make this work out-of-the-box, the extension auto-syncs recent Codex `task_complete` events from session logs into codex-mem observations.
-- You can trigger a manual import any time with `Codex Mem: Sync Codex Tasks`.
+- To make this work out-of-the-box, the extension syncs task-execution events from enabled providers into codex-mem observations.
+- You can trigger a manual import any time with `Codex Mem: Sync LLM Tasks (Codex/Claude/Qwen/Gwen)`.
 
 ## Development
 

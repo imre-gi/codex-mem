@@ -14,6 +14,7 @@ export interface BaseEntry {
   kind: EntryKind;
   project: string;
   sessionId?: string;
+  externalKey?: string;
   createdAt: string;
   tags: string[];
 }
@@ -48,6 +49,7 @@ export interface MemoryData {
 export interface AddObservationInput {
   project?: string;
   sessionId?: string;
+  externalKey?: string;
   observationType?: ObservationType;
   title: string;
   content: string;
@@ -58,6 +60,7 @@ export interface AddObservationInput {
 export interface AddSummaryInput {
   project?: string;
   sessionId?: string;
+  externalKey?: string;
   request?: string;
   investigated?: string;
   learned: string;
@@ -75,6 +78,15 @@ export interface SearchOptions {
   since?: string;
   until?: string;
   limit?: number;
+}
+
+export interface ListEntriesOptions {
+  project?: string;
+  kind?: EntryKind;
+  since?: string;
+  until?: string;
+  limit?: number;
+  offset?: number;
 }
 
 export interface SearchResult {
@@ -107,4 +119,51 @@ export interface MemoryKpis {
   projectsTotal: number;
   latestEntryAt?: string;
   oldestEntryAt?: string;
+}
+
+export type TaskStatus = "completed" | "failed" | "running" | "unknown";
+
+export interface ExecutionReportTask {
+  id: number;
+  kind: EntryKind;
+  project: string;
+  sessionId?: string;
+  createdAt: string;
+  title: string;
+  excerpt: string;
+  provider: string;
+  model: string;
+  agent: string;
+  role: string;
+  pipeline: string;
+  status: TaskStatus;
+  taskId?: string;
+  sourceFile?: string;
+  tags: string[];
+}
+
+export interface ExecutionReportCount {
+  key: string;
+  count: number;
+}
+
+export interface ExecutionReportProjectSummary {
+  project: string;
+  total: number;
+  completed: number;
+  failed: number;
+  providers: string[];
+  agents: string[];
+  models: string[];
+  latestAt?: string;
+}
+
+export interface ExecutionReport {
+  total: number;
+  projects: ExecutionReportProjectSummary[];
+  providers: ExecutionReportCount[];
+  agents: ExecutionReportCount[];
+  models: ExecutionReportCount[];
+  statuses: ExecutionReportCount[];
+  tasks: ExecutionReportTask[];
 }

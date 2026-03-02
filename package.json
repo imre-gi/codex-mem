@@ -1,7 +1,7 @@
 {
-  "name": "codex-mem",
+  "name": "vscode-llm-mem",
   "version": "0.2.0",
-  "description": "Persistent project memory MCP plugin for OpenAI Codex",
+  "description": "Persistent project memory MCP plugin for OpenAI Codex, Claude Code, and other major LLMs.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

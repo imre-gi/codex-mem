@@ -2,10 +2,7 @@ import {
   accessSync,
   constants,
   existsSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  type Dirent
+  readFileSync
 } from "node:fs";
 import { join, isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
@@ -61,24 +58,67 @@ interface DashboardData {
     skippedTasks: number;
     failedTasks: number;
     newestTaskAt?: string;
+    byProvider: Array<{
+      provider: string;
+      detected: number;
+      imported: number;
+      skipped: number;
+      failed: number;
+    }>;
+  };
+  execution: {
+    total: number;
+    projects: Array<{
+      project: string;
+      total: number;
+      completed: number;
+      failed: number;
+      providers: string[];
+      agents: string[];
+      models: string[];
+      latestAt?: string;
+    }>;
+    providers: Array<{ key: string; count: number }>;
+    agents: Array<{ key: string; count: number }>;
+    models: Array<{ key: string; count: number }>;
+    statuses: Array<{ key: string; count: number }>;
+    tasks: Array<{
+      id: number;
+      kind: string;
+      project: string;
+      sessionId?: string;
+      createdAt: string;
+      title: string;
+      excerpt: string;
+      provider: string;
+      model: string;
+      agent: string;
+      role: string;
+      pipeline: string;
+      status: string;
+      taskId?: string;
+      sourceFile?: string;
+      tags: string[];
+    }>;
   };
   recentTasks: DashboardTask[];
   error?: string;
 }
 
-interface CodexTaskEvent {
-  turnId: string;
-  timestamp: string;
-  lastAgentMessage: string;
-}
-
-interface CodexTaskSyncMetrics {
+interface TaskSyncMetrics {
   autoSyncEnabled: boolean;
   detectedTasks: number;
   importedTasks: number;
   skippedTasks: number;
   failedTasks: number;
   newestTaskAt?: string;
+  byProvider: Array<{
+    provider: string;
+    detected: number;
+    imported: number;
+    skipped: number;
+    failed: number;
+  }>;
 }
 
 const OUTPUT = vscode.window.createOutputChannel("Codex Mem");
@@ -86,18 +126,14 @@ const DASHBOARD_VIEW_TYPE = "codexMem.statusDashboard.view";
 const DASHBOARD_TITLE = "Codex Mem Dashboard";
 const MCP_SERVER_SECTION = "mcp_servers.codex-mem";
 const CODEX_CONFIG_PATH = join(homedir(), ".codex", "config.toml");
-const CODEX_SESSIONS_PATH = join(homedir(), ".codex", "sessions");
-const IMPORTED_TURN_IDS_STATE_KEY = "codexMem.importedTurnIds.v1";
-const MAX_TRACKED_TURN_IDS = 5000;
 const DEFAULT_AUTO_SYNC_LOOKBACK_DAYS = 7;
 const DEFAULT_AUTO_SYNC_MAX_IMPORT = 25;
-
-let extensionState: vscode.Memento | undefined;
+const DEFAULT_AUTO_SYNC_MAX_FILES = 24;
+const DEFAULT_EXECUTION_REPORT_LIMIT = 600;
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(OUTPUT);
   OUTPUT.appendLine("Codex Mem extension activated.");
-  extensionState = context.globalState;
   let dashboardPanel: vscode.WebviewPanel | undefined;
 
   context.subscriptions.push(
@@ -142,11 +178,17 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.syncCodexTasks", async () => {
-      const metrics = await syncCodexTasksIntoMemory({ force: true });
-      OUTPUT.appendLine(`Codex task sync metrics: ${JSON.stringify(metrics)}`);
+      const metrics = await syncTaskExecutions({ force: true });
+      OUTPUT.appendLine(`Task sync metrics: ${JSON.stringify(metrics)}`);
       vscode.window.showInformationMessage(
-        `Codex task sync complete. Imported ${metrics.importedTasks} of ${metrics.detectedTasks} detected tasks.`
+        `LLM task sync complete. Imported ${metrics.importedTasks} of ${metrics.detectedTasks} detected tasks.`
       );
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codexMem.projectExplorer", async () => {
+      await vscode.commands.executeCommand("codexMem.statusDashboard");
     })
   );
 
@@ -204,10 +246,10 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           if (cmd === "sync-tasks") {
-            const metrics = await syncCodexTasksIntoMemory({ force: true });
+            const metrics = await syncTaskExecutions({ force: true });
             OUTPUT.appendLine(`Dashboard sync metrics: ${JSON.stringify(metrics)}`);
             vscode.window.showInformationMessage(
-              `Codex task sync complete. Imported ${metrics.importedTasks} task(s).`
+              `LLM task sync complete. Imported ${metrics.importedTasks} task(s).`
             );
             await renderDashboardPanel(dashboardPanel);
             return;
@@ -621,16 +663,18 @@ async function renderDashboardPanel(panel: vscode.WebviewPanel): Promise<void> {
 }
 
 async function collectDashboardData(): Promise<DashboardData> {
-  const ingestion = await syncCodexTasksIntoMemory({ force: false });
-  const [statusPayload, recentPayload] = await Promise.all([
+  const ingestion = await syncTaskExecutions({ force: false });
+  const [statusPayload, recentPayload, executionPayload] = await Promise.all([
     runCliJson(["kpis"]),
-    runCliJson(["search", "--limit", "8"])
+    runCliJson(["search", "--limit", "8"]),
+    runCliJson(["execution-report", "--limit", String(getExecutionReportLimit())])
   ]);
 
   const statusRoot = toRecord(statusPayload);
   const worker = toRecord(statusRoot.worker);
   const kpis = toRecord(statusRoot.kpis);
   const recentRoot = toRecord(recentPayload);
+  const executionRoot = toRecord(executionPayload);
   const mcp = readMcpStatus();
   const recentSource = Array.isArray(recentRoot.results) ? recentRoot.results : [];
 
@@ -644,6 +688,8 @@ async function collectDashboardData(): Promise<DashboardData> {
       createdAt: toText(item.createdAt) || ""
     }))
     .filter((item) => Boolean(item.createdAt || item.title));
+
+  const execution = mapExecutionReport(executionRoot);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -666,6 +712,7 @@ async function collectDashboardData(): Promise<DashboardData> {
       oldestEntryAt: toText(kpis.oldestEntryAt)
     },
     ingestion,
+    execution,
     recentTasks
   };
 }
@@ -696,83 +743,78 @@ function createEmptyDashboardData(error?: string): DashboardData {
       detectedTasks: 0,
       importedTasks: 0,
       skippedTasks: 0,
-      failedTasks: 0
+      failedTasks: 0,
+      byProvider: []
+    },
+    execution: {
+      total: 0,
+      projects: [],
+      providers: [],
+      agents: [],
+      models: [],
+      statuses: [],
+      tasks: []
     },
     recentTasks: [],
     error
   };
 }
 
-async function syncCodexTasksIntoMemory(options: {
-  force: boolean;
-}): Promise<CodexTaskSyncMetrics> {
+async function syncTaskExecutions(options: { force: boolean }): Promise<TaskSyncMetrics> {
   const autoSyncEnabled = isAutoSyncEnabled();
-  const detectedEvents = readRecentCodexTaskEvents(
-    Math.max(getAutoSyncMaxImport() * 8, 80)
-  );
-
-  const metrics: CodexTaskSyncMetrics = {
-    autoSyncEnabled,
-    detectedTasks: detectedEvents.length,
-    importedTasks: 0,
-    skippedTasks: 0,
-    failedTasks: 0,
-    newestTaskAt: detectedEvents[0]?.timestamp
-  };
-
   if (!options.force && !autoSyncEnabled) {
-    return metrics;
+    return {
+      autoSyncEnabled,
+      detectedTasks: 0,
+      importedTasks: 0,
+      skippedTasks: 0,
+      failedTasks: 0,
+      byProvider: []
+    };
   }
 
-  if (detectedEvents.length === 0) {
-    return metrics;
+  const args = ["sync-tasks"];
+  const providers = getEnabledProviders();
+  if (providers.length > 0) {
+    args.push("--providers", providers.join(","));
   }
 
-  const trackedTurnIds = getTrackedTurnIds();
-  const maxImport = getAutoSyncMaxImport();
-  const eventsInChronologicalOrder = [...detectedEvents].reverse();
+  args.push("--lookback-days", String(getAutoSyncLookbackDays()));
+  args.push("--max-import", String(getAutoSyncMaxImport()));
+  args.push("--max-files", String(getAutoSyncMaxFiles()));
+
   const defaultProject = getDefaultProject();
-
-  for (const event of eventsInChronologicalOrder) {
-    if (trackedTurnIds.has(event.turnId)) {
-      metrics.skippedTasks += 1;
-      continue;
-    }
-
-    if (metrics.importedTasks >= maxImport) {
-      metrics.skippedTasks += 1;
-      continue;
-    }
-
-    const args = [
-      "add-observation",
-      "--title",
-      buildTaskObservationTitle(event),
-      "--content",
-      buildTaskObservationContent(event),
-      "--type",
-      "note",
-      "--tags",
-      "codex,task-complete"
-    ];
-
-    if (defaultProject) {
-      args.push("--project", defaultProject);
-    }
-
-    try {
-      await runCliJson(args);
-      trackedTurnIds.add(event.turnId);
-      metrics.importedTasks += 1;
-    } catch (error) {
-      metrics.failedTasks += 1;
-      const message = error instanceof Error ? error.message : String(error);
-      OUTPUT.appendLine(`Task sync failed for ${event.turnId}: ${message}`);
-    }
+  if (defaultProject) {
+    args.push("--project", defaultProject);
   }
 
-  await setTrackedTurnIds(trackedTurnIds);
-  return metrics;
+  const codexPath = getPathSetting("codexSessionsPath");
+  const claudePath = getPathSetting("claudeSessionsPath");
+  const qwenPath = getPathSetting("qwenSessionsPath");
+  const gwenPath = getPathSetting("gwenSessionsPath");
+  if (codexPath) {
+    args.push("--codex-path", codexPath);
+  }
+  if (claudePath) {
+    args.push("--claude-path", claudePath);
+  }
+  if (qwenPath) {
+    args.push("--qwen-path", qwenPath);
+  }
+  if (gwenPath) {
+    args.push("--gwen-path", gwenPath);
+  }
+
+  const result = toRecord(await runCliJson(args));
+  return {
+    autoSyncEnabled,
+    detectedTasks: toNumber(result.detectedTasks) ?? 0,
+    importedTasks: toNumber(result.importedTasks) ?? 0,
+    skippedTasks: toNumber(result.skippedTasks) ?? 0,
+    failedTasks: toNumber(result.failedTasks) ?? 0,
+    newestTaskAt: toText(result.newestTaskAt),
+    byProvider: mapProviderSyncList(result.byProvider)
+  };
 }
 
 function isAutoSyncEnabled(): boolean {
@@ -788,6 +830,16 @@ function getAutoSyncMaxImport(): number {
   if (typeof configured !== "number" || !Number.isFinite(configured)) {
     return DEFAULT_AUTO_SYNC_MAX_IMPORT;
   }
+  return Math.min(Math.max(Math.floor(configured), 1), 1000);
+}
+
+function getAutoSyncMaxFiles(): number {
+  const configured = vscode.workspace
+    .getConfiguration("codexMem")
+    .get<number>("autoSyncMaxFiles", DEFAULT_AUTO_SYNC_MAX_FILES);
+  if (typeof configured !== "number" || !Number.isFinite(configured)) {
+    return DEFAULT_AUTO_SYNC_MAX_FILES;
+  }
   return Math.min(Math.max(Math.floor(configured), 1), 200);
 }
 
@@ -801,193 +853,135 @@ function getAutoSyncLookbackDays(): number {
   return Math.min(Math.max(Math.floor(configured), 1), 30);
 }
 
-function getCodexSessionsPath(): string {
+function getEnabledProviders(): string[] {
   const configured = vscode.workspace
     .getConfiguration("codexMem")
-    .get<string>("codexSessionsPath", "")
-    .trim();
-  if (configured) {
-    return configured;
-  }
-  return CODEX_SESSIONS_PATH;
-}
+    .get<string[]>("enabledProviders", ["codex", "claude", "qwen", "gwen"]);
 
-function readRecentCodexTaskEvents(limit: number): CodexTaskEvent[] {
-  const maxFiles = 20;
-  const lookbackDays = getAutoSyncLookbackDays();
-  const files = listRecentSessionFiles(getCodexSessionsPath(), maxFiles, lookbackDays);
-  const dedupedByTurnId = new Map<string, CodexTaskEvent>();
-
-  for (const filePath of files) {
-    for (const event of parseTaskEventsFromFile(filePath)) {
-      const existing = dedupedByTurnId.get(event.turnId);
-      if (!existing || event.timestamp > existing.timestamp) {
-        dedupedByTurnId.set(event.turnId, event);
-      }
-    }
+  if (!Array.isArray(configured) || configured.length === 0) {
+    return ["codex", "claude", "qwen", "gwen"];
   }
 
-  return Array.from(dedupedByTurnId.values())
-    .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
-    .slice(0, Math.max(limit, 0));
-}
-
-function listRecentSessionFiles(
-  sessionsRoot: string,
-  maxFiles: number,
-  lookbackDays: number
-): string[] {
-  if (!existsSync(sessionsRoot)) {
-    return [];
-  }
-
-  const cutoffMs = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
-  const pending = [sessionsRoot];
-  const files: Array<{ path: string; mtimeMs: number }> = [];
-
-  while (pending.length > 0) {
-    const currentDir = pending.pop();
-    if (!currentDir) {
-      break;
-    }
-
-    let entries: Dirent[];
-    try {
-      entries = readdirSync(currentDir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-
-    for (const entry of entries) {
-      const absolutePath = join(currentDir, entry.name);
-
-      if (entry.isDirectory()) {
-        pending.push(absolutePath);
-        continue;
-      }
-
-      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
-        continue;
-      }
-
-      try {
-        const stats = statSync(absolutePath);
-        if (stats.mtimeMs >= cutoffMs) {
-          files.push({ path: absolutePath, mtimeMs: stats.mtimeMs });
-        }
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  return files
-    .sort((left, right) => right.mtimeMs - left.mtimeMs)
-    .slice(0, maxFiles)
-    .map((file) => file.path);
-}
-
-function parseTaskEventsFromFile(filePath: string): CodexTaskEvent[] {
-  let raw = "";
-  try {
-    raw = readFileSync(filePath, "utf8");
-  } catch {
-    return [];
-  }
-
-  const events: CodexTaskEvent[] = [];
-  const lines = raw.split(/\r?\n/);
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-
-    const root = toRecord(parsed);
-    if (toText(root.type) !== "event_msg") {
-      continue;
-    }
-
-    const payload = toRecord(root.payload);
-    if (toText(payload.type) !== "task_complete") {
-      continue;
-    }
-
-    const turnId = toText(payload.turn_id);
-    const timestamp = toText(root.timestamp);
-    if (!turnId || !timestamp) {
-      continue;
-    }
-
-    events.push({
-      turnId,
-      timestamp,
-      lastAgentMessage: toText(payload.last_agent_message) || ""
-    });
-  }
-
-  return events;
-}
-
-function getTrackedTurnIds(): Set<string> {
-  const tracked =
-    extensionState?.get<string[]>(IMPORTED_TURN_IDS_STATE_KEY, []) || [];
-  return new Set(tracked);
-}
-
-async function setTrackedTurnIds(turnIds: Set<string>): Promise<void> {
-  if (!extensionState) {
-    return;
-  }
-
-  const allTurnIds = Array.from(turnIds);
-  const trimmed =
-    allTurnIds.length > MAX_TRACKED_TURN_IDS
-      ? allTurnIds.slice(allTurnIds.length - MAX_TRACKED_TURN_IDS)
-      : allTurnIds;
-  await extensionState.update(IMPORTED_TURN_IDS_STATE_KEY, trimmed);
-}
-
-function buildTaskObservationTitle(event: CodexTaskEvent): string {
-  const firstLine = event.lastAgentMessage
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => Boolean(line));
-  const fallback = `Codex task completed (${event.turnId.slice(0, 8)})`;
-  return truncateText((firstLine || fallback).replace(/\s+/g, " "), 120);
-}
-
-function buildTaskObservationContent(event: CodexTaskEvent): string {
-  const summary = truncateText(
-    event.lastAgentMessage.replace(/\s+/g, " ").trim(),
-    1600
+  const allowed = new Set(["codex", "claude", "qwen", "gwen", "all"]);
+  const normalized = [...new Set(configured.map((item) => item.toLowerCase().trim()))].filter(
+    (item) => allowed.has(item)
   );
-  const lines = [
-    "Source: codex session task completion event.",
-    `Turn ID: ${event.turnId}`,
-    `Timestamp: ${event.timestamp}`
-  ];
-
-  if (summary) {
-    lines.push(`Last agent message: ${summary}`);
-  }
-
-  return lines.join("\n");
+  return normalized.length > 0 ? normalized : ["codex", "claude", "qwen", "gwen"];
 }
 
-function truncateText(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value;
+function getPathSetting(key: string): string | undefined {
+  const configured = vscode.workspace
+    .getConfiguration("codexMem")
+    .get<string>(key, "")
+    .trim();
+  return configured || undefined;
+}
+
+function getExecutionReportLimit(): number {
+  const configured = vscode.workspace
+    .getConfiguration("codexMem")
+    .get<number>("executionReportLimit", DEFAULT_EXECUTION_REPORT_LIMIT);
+  if (typeof configured !== "number" || !Number.isFinite(configured)) {
+    return DEFAULT_EXECUTION_REPORT_LIMIT;
   }
-  return `${value.slice(0, maxLength - 3)}...`;
+  return Math.min(Math.max(Math.floor(configured), 50), 5000);
+}
+
+function mapProviderSyncList(value: unknown): TaskSyncMetrics["byProvider"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => toRecord(item))
+    .map((item) => ({
+      provider: toText(item.provider) || "unknown",
+      detected: toNumber(item.detected) ?? 0,
+      imported: toNumber(item.imported) ?? 0,
+      skipped: toNumber(item.skipped) ?? 0,
+      failed: toNumber(item.failed) ?? 0
+    }));
+}
+
+function mapExecutionReport(root: JsonResult): DashboardData["execution"] {
+  return {
+    total: toNumber(root.total) ?? 0,
+    projects: mapExecutionProjects(root.projects),
+    providers: mapExecutionCounts(root.providers),
+    agents: mapExecutionCounts(root.agents),
+    models: mapExecutionCounts(root.models),
+    statuses: mapExecutionCounts(root.statuses),
+    tasks: mapExecutionTasks(root.tasks)
+  };
+}
+
+function mapExecutionProjects(value: unknown): DashboardData["execution"]["projects"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => toRecord(item))
+    .map((item) => ({
+      project: toText(item.project) || "unknown",
+      total: toNumber(item.total) ?? 0,
+      completed: toNumber(item.completed) ?? 0,
+      failed: toNumber(item.failed) ?? 0,
+      providers: mapStringList(item.providers),
+      agents: mapStringList(item.agents),
+      models: mapStringList(item.models),
+      latestAt: toText(item.latestAt)
+    }));
+}
+
+function mapExecutionCounts(value: unknown): Array<{ key: string; count: number }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => toRecord(item))
+    .map((item) => ({
+      key: toText(item.key) || "unknown",
+      count: toNumber(item.count) ?? 0
+    }));
+}
+
+function mapExecutionTasks(value: unknown): DashboardData["execution"]["tasks"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => toRecord(item))
+    .map((item) => ({
+      id: toNumber(item.id) ?? 0,
+      kind: toText(item.kind) || "observation",
+      project: toText(item.project) || "unknown",
+      sessionId: toText(item.sessionId),
+      createdAt: toText(item.createdAt) || "",
+      title: toText(item.title) || "(no title)",
+      excerpt: toText(item.excerpt) || "",
+      provider: toText(item.provider) || "unknown",
+      model: toText(item.model) || "unknown",
+      agent: toText(item.agent) || "unassigned",
+      role: toText(item.role) || "unassigned",
+      pipeline: toText(item.pipeline) || "none",
+      status: toText(item.status) || "unknown",
+      taskId: toText(item.taskId),
+      sourceFile: toText(item.sourceFile),
+      tags: mapStringList(item.tags)
+    }));
+}
+
+function mapStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function readMcpStatus(): DashboardData["mcp"] {
@@ -1086,6 +1080,44 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
           })
           .join("")
       : `<li class="task-empty">No memory tasks found yet.</li>`;
+  const providerSyncRows =
+    data.ingestion.byProvider.length > 0
+      ? data.ingestion.byProvider
+          .map(
+            (item) => `
+              <tr>
+                <td>${escapeHtml(item.provider)}</td>
+                <td>${item.detected}</td>
+                <td>${item.imported}</td>
+                <td>${item.skipped}</td>
+                <td>${item.failed}</td>
+              </tr>
+            `
+          )
+          .join("")
+      : `<tr><td colspan="5" class="muted">No provider data yet.</td></tr>`;
+  const projectRows =
+    data.execution.projects.length > 0
+      ? data.execution.projects
+          .map(
+            (project) => `
+              <tr data-project="${escapeHtml(project.project)}">
+                <td>${escapeHtml(project.project)}</td>
+                <td>${project.total}</td>
+                <td>${project.completed}</td>
+                <td>${project.failed}</td>
+                <td>${escapeHtml(project.providers.slice(0, 3).join(", ") || "n/a")}</td>
+                <td>${escapeHtml(formatIso(project.latestAt))}</td>
+              </tr>
+            `
+          )
+          .join("")
+      : `<tr><td colspan="6" class="muted">No project execution data yet.</td></tr>`;
+  const providerBars = renderBars(data.execution.providers, "provider");
+  const agentBars = renderBars(data.execution.agents, "agent");
+  const modelBars = renderBars(data.execution.models, "model");
+  const statusBars = renderBars(data.execution.statuses, "status");
+  const taskDataJson = toScriptJson(data.execution.tasks);
 
   const errorBlock = data.error
     ? `<div class="error-box">Dashboard error: ${escapeHtml(data.error)}</div>`
@@ -1173,7 +1205,7 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
 
       .cards {
         display: grid;
-        grid-template-columns: repeat(4, minmax(160px, 1fr));
+        grid-template-columns: repeat(6, minmax(140px, 1fr));
         gap: 10px;
         margin-bottom: 12px;
       }
@@ -1219,7 +1251,7 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
 
       .panels {
         display: grid;
-        grid-template-columns: 1.35fr 1fr;
+        grid-template-columns: 1.1fr 1fr;
         gap: 12px;
       }
 
@@ -1252,6 +1284,111 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
         padding: 0;
         max-height: 320px;
         overflow: auto;
+      }
+
+      .subgrid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(140px, 1fr));
+        gap: 6px 8px;
+        font-size: 12px;
+      }
+
+      .bars {
+        display: grid;
+        gap: 8px;
+      }
+
+      .bar {
+        display: grid;
+        grid-template-columns: 120px 1fr 46px;
+        gap: 8px;
+        align-items: center;
+        font-size: 12px;
+      }
+
+      .bar-key {
+        color: var(--fg-1);
+      }
+
+      .bar-track {
+        height: 9px;
+        border-radius: 999px;
+        background: rgba(188, 204, 221, 0.15);
+        overflow: hidden;
+      }
+
+      .bar-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #2b8a3e, #59d089);
+      }
+
+      .bar-val {
+        text-align: right;
+      }
+
+      .table-wrap {
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        margin-top: 6px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      th,
+      td {
+        padding: 8px 9px;
+        border-bottom: 1px solid rgba(188, 204, 221, 0.1);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--fg-1);
+        position: sticky;
+        top: 0;
+        background: #121a24;
+        z-index: 1;
+      }
+
+      tr[data-project] {
+        cursor: pointer;
+      }
+
+      tr[data-project]:hover {
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .muted {
+        color: var(--fg-1);
+      }
+
+      .filter-row {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(120px, 1fr));
+        gap: 8px;
+        margin-top: 6px;
+      }
+
+      select {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #121a24;
+        color: var(--fg-0);
+        padding: 6px 8px;
+        font-size: 12px;
+      }
+
+      .task-counter {
+        margin-top: 8px;
+        color: var(--fg-1);
+        font-size: 12px;
       }
 
       .task-item {
@@ -1309,6 +1446,12 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
         .panels {
           grid-template-columns: 1fr;
         }
+        .filter-row {
+          grid-template-columns: repeat(2, minmax(120px, 1fr));
+        }
+        .bar {
+          grid-template-columns: 90px 1fr 40px;
+        }
       }
     </style>
   </head>
@@ -1322,7 +1465,7 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
         <div class="actions">
           <button data-cmd="refresh">Refresh</button>
           <button data-cmd="setup">Setup</button>
-          <button data-cmd="sync-tasks">Sync Codex Tasks</button>
+          <button data-cmd="sync-tasks">Sync LLM Tasks</button>
           <button data-cmd="start-worker">Start Worker</button>
           <button data-cmd="stop-worker">Stop Worker</button>
         </div>
@@ -1358,6 +1501,14 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
           <div class="label">Detected (Recent)</div>
           <div class="value">${data.ingestion.detectedTasks}</div>
         </article>
+        <article class="card">
+          <div class="label">Providers</div>
+          <div class="value">${data.execution.providers.length}</div>
+        </article>
+        <article class="card">
+          <div class="label">Agents</div>
+          <div class="value">${data.execution.agents.length}</div>
+        </article>
       </section>
 
       <section class="panels">
@@ -1380,7 +1531,16 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
             <div class="k">Sync Imported</div><div>${data.ingestion.importedTasks}</div>
             <div class="k">Sync Skipped</div><div>${data.ingestion.skippedTasks}</div>
             <div class="k">Sync Errors</div><div>${data.ingestion.failedTasks}</div>
-            <div class="k">Newest Codex Task</div><div>${escapeHtml(formatIso(data.ingestion.newestTaskAt))}</div>
+            <div class="k">Newest Task</div><div>${escapeHtml(formatIso(data.ingestion.newestTaskAt))}</div>
+          </div>
+          <h3 style="margin-top:14px;">Provider Sync</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Provider</th><th>Detected</th><th>Imported</th><th>Skipped</th><th>Failed</th></tr>
+              </thead>
+              <tbody>${providerSyncRows}</tbody>
+            </table>
           </div>
         </article>
         <article class="panel">
@@ -1388,17 +1548,222 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
           <ul class="tasks">${recentItems}</ul>
         </article>
       </section>
+
+      <section class="panels" style="margin-top:12px;">
+        <article class="panel">
+          <h3>Execution Visualizer</h3>
+          <div class="subgrid">
+            <div>
+              <div class="label">By Provider</div>
+              <div class="bars">${providerBars}</div>
+            </div>
+            <div>
+              <div class="label">By Status</div>
+              <div class="bars">${statusBars}</div>
+            </div>
+            <div>
+              <div class="label">By Agent</div>
+              <div class="bars">${agentBars}</div>
+            </div>
+            <div>
+              <div class="label">By Model</div>
+              <div class="bars">${modelBars}</div>
+            </div>
+          </div>
+        </article>
+        <article class="panel">
+          <h3>Project Explorer</h3>
+          <div class="table-wrap">
+            <table id="projectTable">
+              <thead>
+                <tr>
+                  <th>Project</th>
+                  <th>Total</th>
+                  <th>Done</th>
+                  <th>Failed</th>
+                  <th>Providers</th>
+                  <th>Latest</th>
+                </tr>
+              </thead>
+              <tbody>${projectRows}</tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel" style="margin-top:12px;">
+        <h3>Task Explorer</h3>
+        <div class="filter-row">
+          <select id="filter-project"></select>
+          <select id="filter-provider"></select>
+          <select id="filter-agent"></select>
+          <select id="filter-model"></select>
+          <select id="filter-status"></select>
+        </div>
+        <div class="task-counter" id="taskCounter"></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Project</th>
+                <th>Provider</th>
+                <th>Model</th>
+                <th>Agent</th>
+                <th>Status</th>
+                <th>Task</th>
+              </tr>
+            </thead>
+            <tbody id="taskRows">
+              <tr><td colspan="7" class="muted">No task execution data available yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
     <script nonce="${nonce}">
       const vscode = acquireVsCodeApi();
+      const ALL_TASKS = ${taskDataJson};
+
       for (const button of document.querySelectorAll("button[data-cmd]")) {
         button.addEventListener("click", () => {
           vscode.postMessage({ command: button.getAttribute("data-cmd") });
         });
       }
+
+      const filters = {
+        project: document.getElementById("filter-project"),
+        provider: document.getElementById("filter-provider"),
+        agent: document.getElementById("filter-agent"),
+        model: document.getElementById("filter-model"),
+        status: document.getElementById("filter-status")
+      };
+      const taskRows = document.getElementById("taskRows");
+      const taskCounter = document.getElementById("taskCounter");
+
+      function uniqueSorted(values) {
+        return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      }
+
+      function initFilter(select, values, label) {
+        const options = ['<option value="">' + escape(label) + ': all</option>'];
+        for (const value of values) {
+          options.push(
+            '<option value="' + escape(value) + '">' + escape(value) + '</option>'
+          );
+        }
+        select.innerHTML = options.join("");
+      }
+
+      function escape(value) {
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function formatWhen(value) {
+        if (!value) return "n/a";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value;
+        return date.toLocaleString();
+      }
+
+      function renderTasks() {
+        const filtered = ALL_TASKS.filter((task) => {
+          if (filters.project.value && task.project !== filters.project.value) return false;
+          if (filters.provider.value && task.provider !== filters.provider.value) return false;
+          if (filters.agent.value && task.agent !== filters.agent.value) return false;
+          if (filters.model.value && task.model !== filters.model.value) return false;
+          if (filters.status.value && task.status !== filters.status.value) return false;
+          return true;
+        });
+
+        taskCounter.textContent =
+          "Showing " + filtered.length + " of " + ALL_TASKS.length + " tasks";
+
+        if (filtered.length === 0) {
+          taskRows.innerHTML =
+            '<tr><td colspan="7" class="muted">No tasks match current filters.</td></tr>';
+          return;
+        }
+
+        const rows = filtered
+          .slice(0, 300)
+          .map(
+            (task) =>
+              "<tr>" +
+              "<td>" + escape(formatWhen(task.createdAt)) + "</td>" +
+              "<td>" + escape(task.project) + "</td>" +
+              "<td>" + escape(task.provider) + "</td>" +
+              "<td>" + escape(task.model) + "</td>" +
+              "<td>" + escape(task.agent) + "</td>" +
+              "<td>" + escape(task.status) + "</td>" +
+              '<td title="' + escape(task.excerpt || "") + '">' + escape(task.title) + "</td>" +
+              "</tr>"
+          )
+          .join("");
+
+        taskRows.innerHTML = rows;
+      }
+
+      initFilter(filters.project, uniqueSorted(ALL_TASKS.map((item) => item.project)), "Project");
+      initFilter(filters.provider, uniqueSorted(ALL_TASKS.map((item) => item.provider)), "Provider");
+      initFilter(filters.agent, uniqueSorted(ALL_TASKS.map((item) => item.agent)), "Agent");
+      initFilter(filters.model, uniqueSorted(ALL_TASKS.map((item) => item.model)), "Model");
+      initFilter(filters.status, uniqueSorted(ALL_TASKS.map((item) => item.status)), "Status");
+
+      for (const filter of Object.values(filters)) {
+        filter.addEventListener("change", renderTasks);
+      }
+
+      for (const row of document.querySelectorAll("#projectTable tr[data-project]")) {
+        row.addEventListener("click", () => {
+          const project = row.getAttribute("data-project") || "";
+          filters.project.value = project;
+          renderTasks();
+        });
+      }
+
+      renderTasks();
     </script>
   </body>
 </html>`;
+}
+
+function renderBars(
+  items: Array<{ key: string; count: number }>,
+  label: string
+): string {
+  if (items.length === 0) {
+    return `<div class="muted">No ${escapeHtml(label)} data</div>`;
+  }
+
+  const maxCount = Math.max(...items.map((item) => item.count), 1);
+  return items
+    .slice(0, 8)
+    .map((item) => {
+      const width = Math.round((item.count / maxCount) * 100);
+      return `
+        <div class="bar">
+          <div class="bar-key">${escapeHtml(item.key)}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
+          <div class="bar-val">${item.count}</div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function toScriptJson(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 }
 
 function toRecord(value: unknown): JsonResult {
