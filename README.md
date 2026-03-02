@@ -1,114 +1,147 @@
 # codex-mem
 
-Persistent project memory for OpenAI Codex, inspired by the practical workflow of `claude-mem`.
+Persistent memory for OpenAI Codex with a lightweight local worker service and SQLite backend.
 
-`codex-mem` provides:
+`codex-mem` is inspired by `claude-mem` architecture and now includes the same core shape:
 
-- an MCP server (`mcp` mode) that Codex can call as tools
-- a local CLI for direct usage and debugging
-- a local JSON-backed memory store
-- a VS Code extension (`vscode-extension/`) for IDE-native workflows
+- MCP tools for Codex
+- a lightweight background worker service (HTTP)
+- persistent local DB storage (SQLite)
+- local CLI for direct usage and debugging
+- optional VS Code extension integration
 
 ## Table of Contents
 
-- [What It Solves](#what-it-solves)
 - [Architecture](#architecture)
 - [Repository Layout](#repository-layout)
 - [Requirements](#requirements)
-- [Install and Build](#install-and-build)
-- [Codex MCP Integration](#codex-mcp-integration)
+- [Install](#install)
+- [Quick Start](#quick-start)
+- [Codex MCP Setup](#codex-mcp-setup)
+- [Worker Service](#worker-service)
 - [CLI Reference](#cli-reference)
 - [MCP Tools Reference](#mcp-tools-reference)
-- [Data Storage and Model](#data-storage-and-model)
-- [Search, Timeline, and Context Behavior](#search-timeline-and-context-behavior)
+- [Storage](#storage)
 - [VS Code Extension](#vs-code-extension)
-- [Recommended Workflows](#recommended-workflows)
 - [Troubleshooting](#troubleshooting)
-- [Security and Privacy](#security-and-privacy)
-- [Limitations](#limitations)
 - [Development](#development)
 - [License](#license)
 
-## What It Solves
-
-LLM coding sessions often lose important context between runs. `codex-mem` stores important working memory in a structured local format so later sessions can retrieve it quickly.
-
-The memory model has two record types:
-
-- `observation`: a concrete event, decision, gotcha, bugfix, or change
-- `summary`: end-of-task compressed context (learned, completed, next steps)
-
 ## Architecture
 
-`codex-mem` has three runtime surfaces:
+`codex-mem` uses 3 runtime pieces:
 
-1. CLI (`src/cli.ts`)
-- Runs commands directly (`add-observation`, `search`, `context`, etc.)
-- Runs MCP server mode via `mcp` command
+1. Worker service (`src/worker-service.ts`)
+- Local HTTP service (default `127.0.0.1:37777`)
+- Handles memory operations
+- Reads/writes SQLite DB
 
 2. MCP server (`src/mcp-server.ts`)
-- Exposes tool endpoints for Codex (`mem_search`, `mem_timeline`, etc.)
-- Uses stdio transport for `codex mcp add ... -- <command>` usage
+- Exposes `mem_*` tools to Codex
+- Calls the running worker service
 
-3. Store (`src/store.ts`)
-- JSON persistence with atomic write pattern (`.tmp` + rename)
-- Search, timeline windowing, and project listing
-
-The VS Code extension (`vscode-extension/`) is a separate package that shells out to the CLI.
+3. CLI (`src/cli.ts`)
+- Worker lifecycle (`worker start|stop|restart|status|run`)
+- Direct local operations (`add-observation`, `search`, etc.)
+- `mcp` command auto-starts worker and runs MCP server
 
 ## Repository Layout
 
 ```text
 codex-mem/
   src/
-    cli.ts            # local CLI + mcp entry command
-    mcp-server.ts     # MCP tool server
-    store.ts          # JSON-backed memory store
-    context-pack.ts   # compact prompt context formatter
-    types.ts          # shared types
-    index.ts          # exports
+    cli.ts
+    mcp-server.ts
+    worker-service.ts
+    worker-manager.ts
+    worker-config.ts
+    service-client.ts
+    store.ts            # SQLite-backed memory store
+    context-pack.ts
+    types.ts
   tests/
-    store.test.ts     # unit tests
+    store.test.ts
   vscode-extension/
-    src/extension.ts  # VS Code commands
-    package.json      # extension manifest
+    package.json
+    src/extension.ts
 ```
 
 ## Requirements
 
 - Node.js `>=20`
 - npm
-- Optional: OpenAI Codex CLI (`@openai/codex`) if you want MCP integration from Codex CLI
-- Optional: VS Code if you want extension workflows
+- Optional: OpenAI Codex CLI (`@openai/codex`)
+- Optional: VS Code
 
-## Install and Build
-
-From source:
+## Install
 
 ```bash
 cd /home/imre/Development/codex-mem
 npm install
 npm run build
-```
-
-Run tests:
-
-```bash
 npm test
 ```
 
-Dev MCP server without build output:
+## Quick Start
+
+### 0. One-time enable (recommended)
 
 ```bash
-npm run dev
+node dist/cli.js enable
 ```
 
-## Codex MCP Integration
+This registers `codex-mem` in Codex MCP settings automatically.  
+After that, just run `codex` normally.
 
-After build, register the MCP server with Codex:
+### 1. Start worker
+
+```bash
+node dist/cli.js worker start
+```
+
+### 2. Verify health
+
+```bash
+node dist/cli.js worker status
+```
+
+### 3. Save memory
+
+```bash
+node dist/cli.js add-observation \
+  --title "Fix auth callback" \
+  --content "Normalized callback parsing and added guard" \
+  --type bugfix \
+  --tags auth,oauth
+```
+
+### 4. Query memory
+
+```bash
+node dist/cli.js search --query auth
+node dist/cli.js context --query auth --full-count 3
+```
+
+### 5. Stop worker
+
+```bash
+node dist/cli.js worker stop
+```
+
+## Codex MCP Setup
+
+Register `codex-mem` MCP server with Codex:
 
 ```bash
 codex mcp add codex-mem -- node /home/imre/Development/codex-mem/dist/cli.js mcp
+```
+
+The `mcp` command auto-starts the worker backend if needed.
+
+Equivalent single-command setup from this repo:
+
+```bash
+node dist/cli.js enable
 ```
 
 Verify:
@@ -126,49 +159,111 @@ Install globally:
 npm install -g @openai/codex
 ```
 
-Or use `npx` (no global install):
+Or use `npx`:
 
 ```bash
 npx @openai/codex mcp add codex-mem -- node /home/imre/Development/codex-mem/dist/cli.js mcp
 ```
 
-## CLI Reference
+## Worker Service
 
-CLI entry:
+Default runtime:
 
-- built: `node dist/cli.js ...`
-- dev: `tsx src/cli.ts ...`
-- optional linked binary: `npm link` then `codex-mem ...`
+- Host: `127.0.0.1`
+- Port: `37777`
 
-### Global Option
+Custom host/port:
 
-- `--data-file <path>`: override memory file path for any command
+```bash
+node dist/cli.js worker start --host 127.0.0.1 --port 37888
+node dist/cli.js worker status --host 127.0.0.1 --port 37888
+node dist/cli.js worker stop --host 127.0.0.1 --port 37888
+```
 
-Default path if omitted:
+Foreground mode (for debugging):
+
+```bash
+node dist/cli.js worker run
+```
+
+Worker logs:
 
 ```text
-~/.codex-mem/memory.json
+~/.codex-mem/logs/worker-YYYY-MM-DD.log
 ```
+
+Worker PID file:
+
+```text
+~/.codex-mem/worker.pid
+```
+
+### Worker HTTP API (internal)
+
+- `GET /api/health`
+- `POST /api/admin/shutdown`
+- `POST /api/memory/add-observation`
+- `POST /api/memory/add-summary`
+- `POST /api/memory/search`
+- `POST /api/memory/timeline`
+- `POST /api/memory/get-entries`
+- `POST /api/memory/context-pack`
+- `GET /api/memory/projects`
+
+## CLI Reference
+
+### Global options
+
+- `--data-file <path>`: SQLite DB file path override
+- `--host <host>`: worker host override
+- `--port <port>`: worker port override
 
 ### Commands
 
-#### `mcp`
+- `enable`
+- `mcp`
+- `worker start|stop|restart|status|run`
+- `init`
+- `add-observation`
+- `add-summary`
+- `search`
+- `timeline`
+- `get`
+- `context`
+- `list-projects`
+- `help`
 
-Start MCP stdio server.
-
-```bash
-node dist/cli.js mcp
-```
-
-#### `init`
-
-Ensure store exists and print data file path.
+### `init`
 
 ```bash
 node dist/cli.js init
 ```
 
-#### `add-observation`
+Returns DB path and current worker status.
+
+### `enable`
+
+Registers this repository as an MCP server in Codex config.
+
+```bash
+node dist/cli.js enable
+```
+
+Optional:
+
+- `--name <mcp-name>` (default: `codex-mem`)
+- `--host <host>`
+- `--port <port>`
+- `--data-file <path>`
+
+Behavior:
+
+- Uses local `codex` binary if available
+- Falls back to `npx --yes @openai/codex`
+- Idempotent: if same server config already exists, no change is made
+- If a server with same name exists but different command/args, it is replaced
+
+### `add-observation`
 
 Required:
 
@@ -183,18 +278,7 @@ Optional:
 - `--tags <comma,separated>`
 - `--files <comma,separated>`
 
-Example:
-
-```bash
-node dist/cli.js add-observation \
-  --title "Fix OAuth callback state check" \
-  --content "Normalized callback params and added nonce guard" \
-  --type bugfix \
-  --tags auth,oauth \
-  --files src/auth/callback.ts,tests/auth.test.ts
-```
-
-#### `add-summary`
+### `add-summary`
 
 Required:
 
@@ -212,18 +296,7 @@ Optional:
 - `--files-read <comma,separated>`
 - `--files-edited <comma,separated>`
 
-Example:
-
-```bash
-node dist/cli.js add-summary \
-  --request "stabilize oauth callback" \
-  --learned "URL param normalization prevented state mismatch edge cases" \
-  --completed "fixed callback parser and added tests" \
-  --next-steps "monitor auth error logs for 48h" \
-  --files-edited src/auth/callback.ts,tests/auth.test.ts
-```
-
-#### `search`
+### `search`
 
 Optional:
 
@@ -234,18 +307,12 @@ Optional:
 - `--until <ISO-8601>`
 - `--limit <number>`
 
-Example:
+### `timeline`
 
-```bash
-node dist/cli.js search --query oauth --kind observation --limit 20
-```
-
-#### `timeline`
-
-Anchor by either:
+Use either:
 
 - `--id <number>`
-- or `--query <text>` (best first search hit becomes anchor)
+- or `--query <text>` (best search match becomes anchor)
 
 Optional:
 
@@ -253,265 +320,95 @@ Optional:
 - `--before <n>`
 - `--after <n>`
 
-Example:
+### `get`
 
 ```bash
-node dist/cli.js timeline --query oauth --before 3 --after 3
+node dist/cli.js get --ids 1,2,3
 ```
 
-#### `get`
-
-Required:
-
-- `--ids <comma,separated numeric ids>`
-
-Example:
+### `context`
 
 ```bash
-node dist/cli.js get --ids 12,14,22
-```
-
-#### `context`
-
-Build `<codex-mem-context>` markdown block.
-
-Optional:
-
-- `--query <text>`
-- `--project <name>`
-- `--limit <number>`
-- `--full-count <number>`
-
-Example:
-
-```bash
-node dist/cli.js context --query oauth --full-count 3
-```
-
-#### `list-projects`
-
-List all known project names.
-
-```bash
-node dist/cli.js list-projects
-```
-
-#### `help`
-
-```bash
-node dist/cli.js help
+node dist/cli.js context --query "oauth" --full-count 3
 ```
 
 ## MCP Tools Reference
 
-Tools exposed by `src/mcp-server.ts`:
+- `mem_add_observation`
+- `mem_add_summary`
+- `mem_search`
+- `mem_timeline`
+- `mem_get_entries`
+- `mem_context_pack`
+- `mem_list_projects`
 
-### `mem_add_observation`
+### Tool inputs
 
-Required fields:
+`mem_add_observation`
 
-- `title: string`
-- `content: string`
+- required: `title`, `content`
+- optional: `project`, `sessionId`, `observationType`, `tags[]`, `files[]`
 
-Optional fields:
+`mem_add_summary`
 
-- `project: string`
-- `sessionId: string`
-- `observationType: "bugfix" | "feature" | "refactor" | "discovery" | "decision" | "change" | "note"`
-- `tags: string[]`
-- `files: string[]`
+- required: `learned`
+- optional: `project`, `sessionId`, `request`, `investigated`, `completed`, `nextSteps`, `tags[]`, `filesRead[]`, `filesEdited[]`
 
-### `mem_add_summary`
+`mem_search`
 
-Required fields:
+- optional: `query`, `project`, `kind`, `since`, `until`, `limit`
 
-- `learned: string`
+`mem_timeline`
 
-Optional fields:
+- optional: `id`, `query`, `project`, `before`, `after`
 
-- `project: string`
-- `sessionId: string`
-- `request: string`
-- `investigated: string`
-- `completed: string`
-- `nextSteps: string`
-- `tags: string[]`
-- `filesRead: string[]`
-- `filesEdited: string[]`
+`mem_get_entries`
 
-### `mem_search`
+- required: `ids[]`
 
-Optional fields:
+`mem_context_pack`
 
-- `query: string`
-- `project: string`
-- `kind: "observation" | "summary"`
-- `since: string` (ISO-8601)
-- `until: string` (ISO-8601)
-- `limit: number`
+- optional: `query`, `project`, `limit`, `fullCount`
 
-Returns compact index rows (`id`, `kind`, `title`, `excerpt`, `createdAt`, `score`).
+`mem_list_projects`
 
-### `mem_timeline`
+- no input
 
-Optional fields:
+## Storage
 
-- `id: number`
-- `query: string`
-- `project: string`
-- `before: number`
-- `after: number`
+DB backend: SQLite via `better-sqlite3`.
 
-Returns chronological neighbors around the anchor entry.
-
-### `mem_get_entries`
-
-Required fields:
-
-- `ids: number[]`
-
-Returns full entry objects.
-
-### `mem_context_pack`
-
-Optional fields:
-
-- `query: string`
-- `project: string`
-- `limit: number`
-- `fullCount: number`
-
-Returns markdown context block wrapped in `<codex-mem-context>...</codex-mem-context>`.
-
-### `mem_list_projects`
-
-No args. Returns all stored projects.
-
-## Data Storage and Model
-
-Default file path:
+Default DB file:
 
 ```text
-~/.codex-mem/memory.json
+~/.codex-mem/codex-mem.db
 ```
 
-Override with environment variable:
+Override path:
 
 ```bash
-export CODEX_MEM_DATA_FILE=/absolute/path/memory.json
+export CODEX_MEM_DB_FILE=/absolute/path/codex-mem.db
 ```
 
-### File Shape
+Backward compatibility alias also works:
 
-```json
-{
-  "version": 1,
-  "lastId": 2,
-  "entries": [
-    {
-      "id": 1,
-      "kind": "observation",
-      "project": "codex-mem",
-      "sessionId": "optional-session",
-      "createdAt": "2026-03-02T08:00:00.000Z",
-      "tags": ["auth"],
-      "observationType": "bugfix",
-      "title": "Fix callback guard",
-      "content": "Added null check before decoding state",
-      "files": ["src/auth/callback.ts"]
-    },
-    {
-      "id": 2,
-      "kind": "summary",
-      "project": "codex-mem",
-      "createdAt": "2026-03-02T08:10:00.000Z",
-      "tags": [],
-      "request": "stabilize callback",
-      "investigated": "state mismatch reports",
-      "learned": "URL decoding was inconsistent",
-      "completed": "normalized parser + tests",
-      "nextSteps": "watch logs",
-      "filesRead": ["src/auth/callback.ts"],
-      "filesEdited": ["src/auth/callback.ts", "tests/auth.test.ts"]
-    }
-  ]
-}
+```bash
+export CODEX_MEM_DATA_FILE=/absolute/path/codex-mem.db
 ```
 
-### Persistence Details
+### Data model
 
-- IDs are monotonic (`lastId + 1`)
-- Writes use temp-file + rename for atomic replacement
-- Lists are normalized (trimmed, deduplicated)
-- Project defaults to current directory name if omitted
-- If JSON parsing fails, store reads as empty in-memory data for that run
+Single table `entries` with `kind` discriminator:
 
-## Search, Timeline, and Context Behavior
-
-### Search Ranking
-
-For each query token:
-
-- `+10` if token appears in title
-- `+4` if token appears in searchable body text
-- `+6` if token equals a tag (exact lowercase match)
-
-Sort order:
-
-1. higher score
-2. newer timestamp (`createdAt` desc)
-
-Limits:
-
-- default limit: `10`
-- max limit: `100`
-
-### Timeline Behavior
-
-- If `id` is provided, it is the anchor
-- Else it resolves anchor from top `search` result for `query`
-- Default window: `before=5`, `after=5`
-- Max window each side: `50`
-
-### Context Pack Behavior
-
-From `src/context-pack.ts`:
-
-- `limit` default `12`, clamped to `1..30`
-- `fullCount` default `3`, clamped to `0..10`
-- Produces:
-  - `# Memory Index` with compact rows
-  - `# Expanded Entries` for top `fullCount` IDs
+- shared columns: id, project, session_id, created_at, tags
+- observation columns: observation_type, title, content, files
+- summary columns: request, investigated, learned, completed, next_steps, files_read, files_edited
 
 ## VS Code Extension
 
-A VS Code extension is included in `vscode-extension/`.
+Local extension package: `vscode-extension/`.
 
-### What It Adds
-
-Command Palette commands:
-
-- `Codex Mem: Initialize Store`
-- `Codex Mem: Add Observation`
-- `Codex Mem: Add Summary`
-- `Codex Mem: Search Memory`
-- `Codex Mem: Generate Context Pack`
-- `Codex Mem: Open Memory File`
-
-### Extension Settings
-
-- `codexMem.cliPath`
-  - optional explicit path to CLI binary or `dist/cli.js`
-- `codexMem.defaultProject`
-  - optional default project name used by prompts
-
-### CLI Resolution Order in Extension
-
-1. `codexMem.cliPath` setting
-2. workspace-local `dist/cli.js` via `node`
-3. `codex-mem` from PATH
-
-### Run in Development Host
+Build:
 
 ```bash
 cd /home/imre/Development/codex-mem/vscode-extension
@@ -519,69 +416,22 @@ npm install
 npm run build
 ```
 
-Then in VS Code:
+Run extension dev host:
 
-1. Open `vscode-extension` folder
+1. Open `vscode-extension` in VS Code
 2. Press `F5`
-3. In Extension Development Host window, run `Codex Mem:*` commands
+3. In the Extension Development Host window use commands:
+   - `Codex Mem: Initialize Store`
+   - `Codex Mem: Add Observation`
+   - `Codex Mem: Add Summary`
+   - `Codex Mem: Search Memory`
+   - `Codex Mem: Generate Context Pack`
+   - `Codex Mem: Open Memory File`
 
-### Optional VSIX Packaging
+Extension settings:
 
-```bash
-cd /home/imre/Development/codex-mem/vscode-extension
-npx @vscode/vsce package
-```
-
-## Recommended Workflows
-
-### Workflow A: Task-Based Memory Capture
-
-1. Start task and fetch context:
-
-```bash
-node dist/cli.js context --query "task topic" --full-count 3
-```
-
-2. Record decisions and discoveries during work:
-
-```bash
-node dist/cli.js add-observation --title "Decision" --content "Chose X because Y" --type decision
-```
-
-3. Close task with summary:
-
-```bash
-node dist/cli.js add-summary --learned "..." --completed "..." --next-steps "..."
-```
-
-### Workflow B: Retrieval-First Investigation
-
-1. Find relevant IDs:
-
-```bash
-node dist/cli.js search --query "oauth" --limit 20
-```
-
-2. Fetch full entries:
-
-```bash
-node dist/cli.js get --ids 3,8,11
-```
-
-3. Get nearby chronology:
-
-```bash
-node dist/cli.js timeline --id 8 --before 4 --after 4
-```
-
-### Workflow C: Multi-Repo or Multi-Project
-
-When storing across repositories, always set explicit project names:
-
-```bash
-node dist/cli.js add-observation --project fred-client --title "..." --content "..."
-node dist/cli.js search --project fred-client --query "..."
-```
+- `codexMem.cliPath`
+- `codexMem.defaultProject`
 
 ## Troubleshooting
 
@@ -593,79 +443,36 @@ Install Codex CLI:
 npm install -g @openai/codex
 ```
 
-Or use `npx @openai/codex ...`.
+or run with `npx @openai/codex`.
 
-### `codex-mem: command not found`
+### Worker won’t start
 
-Use explicit node command:
-
-```bash
-node /home/imre/Development/codex-mem/dist/cli.js help
-```
-
-Optional local global link:
+Check:
 
 ```bash
-cd /home/imre/Development/codex-mem
-npm link
+node dist/cli.js worker status
+cat ~/.codex-mem/logs/worker-$(date +%F).log
 ```
 
-### VS Code extension cannot find CLI
+### Port conflict
 
-Set `codexMem.cliPath` to one of:
+Use a different port:
 
-- `/home/imre/Development/codex-mem/dist/cli.js`
-- or absolute path to `codex-mem` binary
+```bash
+node dist/cli.js worker start --port 37888
+node dist/cli.js mcp --port 37888
+```
 
-Then retry command from Command Palette.
+### VS Code extension can’t locate CLI
+
+Set `codexMem.cliPath` to:
+
+- `/home/imre/Development/codex-mem/dist/cli.js` (script path), or
+- `codex-mem` (if linked/global)
 
 ### Node version errors
 
-Check version:
-
-```bash
-node -v
-```
-
-Must be `>=20`.
-
-### Store file permission errors
-
-Ensure writable location for:
-
-- `~/.codex-mem/`
-- or your custom `CODEX_MEM_DATA_FILE` path
-
-### Empty results after migration or edits
-
-Check data file path currently used:
-
-```bash
-node dist/cli.js init
-```
-
-If path is unexpected, confirm `--data-file` and `CODEX_MEM_DATA_FILE` usage.
-
-### Corrupted JSON store
-
-If `memory.json` is malformed, runtime reads as empty data. Restore from backup or fix JSON formatting manually.
-
-## Security and Privacy
-
-- Data is stored locally in plaintext JSON by default
-- No remote syncing or encryption is built in
-- Do not store secrets, tokens, or PII unless your local environment policy allows it
-- Prefer redaction in `content`, `request`, and `learned` fields
-
-## Limitations
-
-Current constraints in v0.1.0:
-
-- No database backend or full-text index engine (JSON only)
-- No cross-process file locking
-- No built-in encryption at rest
-- Search is token/scoring based, not embeddings-based
-- Corrupted JSON fallback currently treats data as empty for that run
+`codex-mem` requires Node `>=20`.
 
 ## Development
 
@@ -678,20 +485,12 @@ npm run dev
 npm run start
 ```
 
-Extension scripts:
+Manual worker + MCP sequence:
 
 ```bash
-cd vscode-extension
-npm install
-npm run build
+node dist/cli.js worker start
+node dist/cli.js mcp
 ```
-
-Core code entry points:
-
-- `src/cli.ts`
-- `src/mcp-server.ts`
-- `src/store.ts`
-- `src/context-pack.ts`
 
 ## License
 

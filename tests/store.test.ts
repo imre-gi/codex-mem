@@ -7,11 +7,12 @@ import { MemoryStore } from "../src/store.js";
 
 function withStore(run: (store: MemoryStore) => void): void {
   const dir = mkdtempSync(join(tmpdir(), "codex-mem-test-"));
-  const file = join(dir, "memory.json");
+  const file = join(dir, "memory.db");
   const store = new MemoryStore(file, "/tmp/demo-project");
   try {
     run(store);
   } finally {
+    store.close();
     rmSync(dir, { recursive: true, force: true });
   }
 }

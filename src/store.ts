@@ -1,17 +1,10 @@
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync
-} from "node:fs";
+import { mkdirSync } from "node:fs";
+import Database from "better-sqlite3";
 import type {
   AddObservationInput,
   AddSummaryInput,
-  MemoryData,
   MemoryEntry,
   ObservationEntry,
   SearchOptions,
@@ -22,77 +15,171 @@ import type {
 } from "./types.js";
 
 const DEFAULT_DATA_DIR = join(homedir(), ".codex-mem");
-const DEFAULT_DATA_FILE = join(DEFAULT_DATA_DIR, "memory.json");
+const DEFAULT_DB_FILE = join(DEFAULT_DATA_DIR, "codex-mem.db");
 const MAX_LIMIT = 100;
 
-function emptyData(): MemoryData {
-  return {
-    version: 1,
-    lastId: 0,
-    entries: []
-  };
+interface EntryRow {
+  id: number;
+  kind: "observation" | "summary";
+  project: string;
+  session_id: string | null;
+  created_at: string;
+  tags_json: string;
+  observation_type: string | null;
+  title: string | null;
+  content: string | null;
+  files_json: string | null;
+  request: string | null;
+  investigated: string | null;
+  learned: string | null;
+  completed: string | null;
+  next_steps: string | null;
+  files_read_json: string | null;
+  files_edited_json: string | null;
 }
 
 export class MemoryStore {
-  private readonly dataFile: string;
+  private readonly dbFile: string;
   private readonly cwd: string;
+  private readonly db: Database.Database;
 
-  constructor(dataFile?: string, cwd?: string) {
-    this.dataFile =
-      dataFile || process.env.CODEX_MEM_DATA_FILE || DEFAULT_DATA_FILE;
+  constructor(dbFile?: string, cwd?: string) {
+    this.dbFile =
+      dbFile ||
+      process.env.CODEX_MEM_DB_FILE ||
+      process.env.CODEX_MEM_DATA_FILE ||
+      DEFAULT_DB_FILE;
     this.cwd = cwd || process.cwd();
-    this.ensureDataFile();
+
+    mkdirSync(dirname(this.dbFile), { recursive: true });
+    this.db = new Database(this.dbFile);
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("synchronous = NORMAL");
+    this.initializeSchema();
   }
 
   getDataFilePath(): string {
-    return this.dataFile;
+    return this.dbFile;
+  }
+
+  close(): void {
+    if (this.db.open) {
+      this.db.close();
+    }
   }
 
   addObservation(input: AddObservationInput): ObservationEntry {
-    const data = this.readData();
-    const id = data.lastId + 1;
-    const entry: ObservationEntry = {
-      id,
+    const createdAt = new Date().toISOString();
+    const project = this.resolveProject(input.project);
+    const sessionId = this.cleanOptional(input.sessionId) || null;
+    const tags = this.cleanList(input.tags);
+    const files = this.cleanList(input.files);
+
+    const info = this.db
+      .prepare(
+        `
+      INSERT INTO entries (
+        kind,
+        project,
+        session_id,
+        created_at,
+        tags_json,
+        observation_type,
+        title,
+        content,
+        files_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+      )
+      .run(
+        "observation",
+        project,
+        sessionId,
+        createdAt,
+        JSON.stringify(tags),
+        input.observationType || "note",
+        this.requireText(input.title, "title"),
+        this.requireText(input.content, "content"),
+        JSON.stringify(files)
+      );
+
+    return {
+      id: Number(info.lastInsertRowid),
       kind: "observation",
-      project: this.resolveProject(input.project),
-      sessionId: this.cleanOptional(input.sessionId),
-      createdAt: new Date().toISOString(),
-      tags: this.cleanList(input.tags),
-      observationType: input.observationType || "note",
+      project,
+      sessionId: sessionId || undefined,
+      createdAt,
+      tags,
+      observationType: (input.observationType || "note") as ObservationEntry["observationType"],
       title: this.requireText(input.title, "title"),
       content: this.requireText(input.content, "content"),
-      files: this.cleanList(input.files)
+      files
     };
-
-    data.lastId = id;
-    data.entries.push(entry);
-    this.writeData(data);
-    return entry;
   }
 
   addSummary(input: AddSummaryInput): SummaryEntry {
-    const data = this.readData();
-    const id = data.lastId + 1;
-    const entry: SummaryEntry = {
-      id,
-      kind: "summary",
-      project: this.resolveProject(input.project),
-      sessionId: this.cleanOptional(input.sessionId),
-      createdAt: new Date().toISOString(),
-      tags: this.cleanList(input.tags),
-      request: this.cleanOptional(input.request) || "",
-      investigated: this.cleanOptional(input.investigated) || "",
-      learned: this.requireText(input.learned, "learned"),
-      completed: this.cleanOptional(input.completed) || "",
-      nextSteps: this.cleanOptional(input.nextSteps) || "",
-      filesRead: this.cleanList(input.filesRead),
-      filesEdited: this.cleanList(input.filesEdited)
-    };
+    const createdAt = new Date().toISOString();
+    const project = this.resolveProject(input.project);
+    const sessionId = this.cleanOptional(input.sessionId) || null;
+    const tags = this.cleanList(input.tags);
+    const filesRead = this.cleanList(input.filesRead);
+    const filesEdited = this.cleanList(input.filesEdited);
 
-    data.lastId = id;
-    data.entries.push(entry);
-    this.writeData(data);
-    return entry;
+    const request = this.cleanOptional(input.request) || "";
+    const investigated = this.cleanOptional(input.investigated) || "";
+    const learned = this.requireText(input.learned, "learned");
+    const completed = this.cleanOptional(input.completed) || "";
+    const nextSteps = this.cleanOptional(input.nextSteps) || "";
+
+    const info = this.db
+      .prepare(
+        `
+      INSERT INTO entries (
+        kind,
+        project,
+        session_id,
+        created_at,
+        tags_json,
+        request,
+        investigated,
+        learned,
+        completed,
+        next_steps,
+        files_read_json,
+        files_edited_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+      )
+      .run(
+        "summary",
+        project,
+        sessionId,
+        createdAt,
+        JSON.stringify(tags),
+        request,
+        investigated,
+        learned,
+        completed,
+        nextSteps,
+        JSON.stringify(filesRead),
+        JSON.stringify(filesEdited)
+      );
+
+    return {
+      id: Number(info.lastInsertRowid),
+      kind: "summary",
+      project,
+      sessionId: sessionId || undefined,
+      createdAt,
+      tags,
+      request,
+      investigated,
+      learned,
+      completed,
+      nextSteps,
+      filesRead,
+      filesEdited
+    };
   }
 
   getEntries(ids: number[]): MemoryEntry[] {
@@ -100,22 +187,24 @@ export class MemoryStore {
       return [];
     }
 
-    const data = this.readData();
-    const byId = new Map(data.entries.map((entry) => [entry.id, entry]));
+    const placeholders = ids.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(`SELECT * FROM entries WHERE id IN (${placeholders})`)
+      .all(...ids) as EntryRow[];
+
+    const byId = new Map(rows.map((row) => [row.id, this.mapRow(row)]));
     return ids
       .map((id) => byId.get(id))
       .filter((entry): entry is MemoryEntry => Boolean(entry));
   }
 
   search(options: SearchOptions): SearchResult[] {
-    const data = this.readData();
     const limit = this.resolveLimit(options.limit);
     const tokens = this.tokenize(options.query);
-    const sinceMs = this.parseTime(options.since);
-    const untilMs = this.parseTime(options.until);
+    const rows = this.fetchFilteredRows(options);
 
-    return data.entries
-      .filter((entry) => this.filterEntry(entry, options, sinceMs, untilMs))
+    return rows
+      .map((row) => this.mapRow(row))
       .map((entry) => {
         const score = this.scoreEntry(entry, tokens);
         return {
@@ -140,21 +229,17 @@ export class MemoryStore {
   }
 
   timeline(options: TimelineOptions): TimelineResult {
-    const data = this.readData();
-    if (data.entries.length === 0) {
+    const rows = this.db
+      .prepare("SELECT * FROM entries ORDER BY created_at ASC, id ASC")
+      .all() as EntryRow[];
+
+    if (rows.length === 0) {
       throw new Error("No memory entries exist yet.");
     }
 
-    const sorted = [...data.entries].sort((a, b) => {
-      if (a.createdAt === b.createdAt) {
-        return a.id - b.id;
-      }
-
-      return a.createdAt.localeCompare(b.createdAt);
-    });
-
-    const anchorId = this.resolveAnchorId(sorted, options);
-    const anchorIndex = sorted.findIndex((entry) => entry.id === anchorId);
+    const entries = rows.map((row) => this.mapRow(row));
+    const anchorId = this.resolveAnchorId(entries, options);
+    const anchorIndex = entries.findIndex((entry) => entry.id === anchorId);
 
     if (anchorIndex < 0) {
       throw new Error(`Entry #${anchorId} not found.`);
@@ -163,56 +248,132 @@ export class MemoryStore {
     const before = this.resolveWindow(options.before, 5);
     const after = this.resolveWindow(options.after, 5);
     const start = Math.max(0, anchorIndex - before);
-    const end = Math.min(sorted.length, anchorIndex + after + 1);
+    const end = Math.min(entries.length, anchorIndex + after + 1);
 
     return {
       anchorId,
-      entries: sorted.slice(start, end)
+      entries: entries.slice(start, end)
     };
   }
 
   listProjects(): string[] {
-    const data = this.readData();
-    return [...new Set(data.entries.map((entry) => entry.project))].sort();
+    const rows = this.db
+      .prepare("SELECT DISTINCT project FROM entries ORDER BY project ASC")
+      .all() as Array<{ project: string }>;
+    return rows.map((row) => row.project);
   }
 
-  private ensureDataFile(): void {
-    mkdirSync(dirname(this.dataFile), { recursive: true });
-    if (!existsSync(this.dataFile)) {
-      this.writeData(emptyData());
+  private initializeSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind TEXT NOT NULL CHECK (kind IN ('observation', 'summary')),
+        project TEXT NOT NULL,
+        session_id TEXT,
+        created_at TEXT NOT NULL,
+        tags_json TEXT NOT NULL,
+        observation_type TEXT,
+        title TEXT,
+        content TEXT,
+        files_json TEXT,
+        request TEXT,
+        investigated TEXT,
+        learned TEXT,
+        completed TEXT,
+        next_steps TEXT,
+        files_read_json TEXT,
+        files_edited_json TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_entries_project ON entries(project);
+      CREATE INDEX IF NOT EXISTS idx_entries_kind ON entries(kind);
+      CREATE INDEX IF NOT EXISTS idx_entries_created ON entries(created_at DESC);
+    `);
+  }
+
+  private fetchFilteredRows(options: SearchOptions): EntryRow[] {
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (options.project) {
+      clauses.push("project = ?");
+      params.push(options.project);
     }
+
+    if (options.kind) {
+      clauses.push("kind = ?");
+      params.push(options.kind);
+    }
+
+    if (options.since) {
+      clauses.push("created_at >= ?");
+      params.push(options.since);
+    }
+
+    if (options.until) {
+      clauses.push("created_at <= ?");
+      params.push(options.until);
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.db
+      .prepare(`SELECT * FROM entries ${whereClause} ORDER BY created_at DESC, id DESC`)
+      .all(...params) as EntryRow[];
   }
 
-  private readData(): MemoryData {
+  private mapRow(row: EntryRow): MemoryEntry {
+    const tags = this.parseJsonArray(row.tags_json);
+
+    if (row.kind === "observation") {
+      return {
+        id: row.id,
+        kind: "observation",
+        project: row.project,
+        sessionId: row.session_id || undefined,
+        createdAt: row.created_at,
+        tags,
+        observationType: (row.observation_type || "note") as ObservationEntry["observationType"],
+        title: row.title || "",
+        content: row.content || "",
+        files: this.parseJsonArray(row.files_json)
+      };
+    }
+
+    return {
+      id: row.id,
+      kind: "summary",
+      project: row.project,
+      sessionId: row.session_id || undefined,
+      createdAt: row.created_at,
+      tags,
+      request: row.request || "",
+      investigated: row.investigated || "",
+      learned: row.learned || "",
+      completed: row.completed || "",
+      nextSteps: row.next_steps || "",
+      filesRead: this.parseJsonArray(row.files_read_json),
+      filesEdited: this.parseJsonArray(row.files_edited_json)
+    };
+  }
+
+  private parseJsonArray(raw: string | null): string[] {
+    if (!raw) {
+      return [];
+    }
+
     try {
-      const raw = readFileSync(this.dataFile, "utf8");
-      const parsed = JSON.parse(raw) as Partial<MemoryData>;
-      if (!parsed || typeof parsed !== "object") {
-        return emptyData();
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        return [];
       }
 
-      const entries = Array.isArray(parsed.entries)
-        ? (parsed.entries as MemoryEntry[])
-        : [];
-
-      return {
-        version: 1,
-        lastId:
-          typeof parsed.lastId === "number"
-            ? parsed.lastId
-            : entries.reduce((max, entry) => Math.max(max, entry.id), 0),
-        entries
-      };
+      return parsed
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean);
     } catch {
-      return emptyData();
+      return [];
     }
-  }
-
-  private writeData(data: MemoryData): void {
-    const tmp = `${this.dataFile}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
-    renameSync(tmp, this.dataFile);
-    rmSync(tmp, { force: true });
   }
 
   private resolveProject(project?: string): string {
@@ -270,15 +431,6 @@ export class MemoryStore {
     return Math.max(0, Math.min(value, 50));
   }
 
-  private parseTime(value?: string): number | undefined {
-    if (!value) {
-      return undefined;
-    }
-
-    const parsed = Date.parse(value);
-    return Number.isNaN(parsed) ? undefined : parsed;
-  }
-
   private tokenize(query?: string): string[] {
     if (!query?.trim()) {
       return [];
@@ -289,34 +441,6 @@ export class MemoryStore {
       .split(/\s+/)
       .map((token) => token.trim())
       .filter(Boolean);
-  }
-
-  private filterEntry(
-    entry: MemoryEntry,
-    options: SearchOptions,
-    sinceMs?: number,
-    untilMs?: number
-  ): boolean {
-    if (options.project && entry.project !== options.project) {
-      return false;
-    }
-
-    if (options.kind && entry.kind !== options.kind) {
-      return false;
-    }
-
-    const createdAtMs = Date.parse(entry.createdAt);
-    if (!Number.isNaN(createdAtMs)) {
-      if (sinceMs !== undefined && createdAtMs < sinceMs) {
-        return false;
-      }
-
-      if (untilMs !== undefined && createdAtMs > untilMs) {
-        return false;
-      }
-    }
-
-    return true;
   }
 
   private scoreEntry(entry: MemoryEntry, tokens: string[]): number {

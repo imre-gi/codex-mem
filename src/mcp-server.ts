@@ -5,8 +5,12 @@ import {
   ListToolsRequestSchema,
   type CallToolRequest
 } from "@modelcontextprotocol/sdk/types.js";
-import { buildContextPack } from "./context-pack.js";
-import { MemoryStore } from "./store.js";
+import { MemoryServiceClient } from "./service-client.js";
+import {
+  DEFAULT_WORKER_HOST,
+  DEFAULT_WORKER_PORT,
+  getWorkerBaseUrl
+} from "./worker-config.js";
 import type { EntryKind, ObservationType } from "./types.js";
 
 const OBSERVATION_TYPES: ObservationType[] = [
@@ -22,19 +26,27 @@ const OBSERVATION_TYPES: ObservationType[] = [
 const ENTRY_KINDS: EntryKind[] = ["observation", "summary"];
 
 export interface StartMcpServerOptions {
-  dataFile?: string;
-  cwd?: string;
+  workerUrl?: string;
+  workerHost?: string;
+  workerPort?: number;
 }
 
 export async function startMcpServer(
   options: StartMcpServerOptions = {}
 ): Promise<void> {
-  const store = new MemoryStore(options.dataFile, options.cwd);
+  const workerUrl =
+    options.workerUrl ||
+    getWorkerBaseUrl(
+      options.workerHost || DEFAULT_WORKER_HOST,
+      options.workerPort || DEFAULT_WORKER_PORT
+    );
+
+  const client = new MemoryServiceClient(workerUrl);
 
   const server = new Server(
     {
       name: "codex-mem",
-      version: "0.1.0"
+      version: "0.2.0"
     },
     {
       capabilities: {
@@ -182,7 +194,7 @@ export async function startMcpServer(
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    return handleToolCall(request, store);
+    return handleToolCall(request, client);
   });
 
   const transport = new StdioServerTransport();
@@ -191,7 +203,7 @@ export async function startMcpServer(
 
 async function handleToolCall(
   request: CallToolRequest,
-  store: MemoryStore
+  client: MemoryServiceClient
 ): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -211,9 +223,9 @@ async function handleToolCall(
           ? (observationTypeRaw as ObservationType)
           : undefined;
 
-        const saved = store.addObservation({
-          project: getString(args, "project", false),
-          sessionId: getString(args, "sessionId", false),
+        const saved = await client.addObservation({
+          project: getString(args, "project", false) || undefined,
+          sessionId: getString(args, "sessionId", false) || undefined,
           observationType,
           title,
           content,
@@ -226,14 +238,14 @@ async function handleToolCall(
 
       case "mem_add_summary": {
         const learned = getString(args, "learned", true);
-        const saved = store.addSummary({
-          project: getString(args, "project", false),
-          sessionId: getString(args, "sessionId", false),
-          request: getString(args, "request", false),
-          investigated: getString(args, "investigated", false),
+        const saved = await client.addSummary({
+          project: getString(args, "project", false) || undefined,
+          sessionId: getString(args, "sessionId", false) || undefined,
+          request: getString(args, "request", false) || undefined,
+          investigated: getString(args, "investigated", false) || undefined,
           learned,
-          completed: getString(args, "completed", false),
-          nextSteps: getString(args, "nextSteps", false),
+          completed: getString(args, "completed", false) || undefined,
+          nextSteps: getString(args, "nextSteps", false) || undefined,
           tags: getStringArray(args, "tags"),
           filesRead: getStringArray(args, "filesRead"),
           filesEdited: getStringArray(args, "filesEdited")
@@ -243,26 +255,23 @@ async function handleToolCall(
       }
 
       case "mem_search": {
-        const results = store.search({
-          query: getString(args, "query", false),
-          project: getString(args, "project", false),
+        const results = await client.search({
+          query: getString(args, "query", false) || undefined,
+          project: getString(args, "project", false) || undefined,
           kind: getKind(args),
-          since: getString(args, "since", false),
-          until: getString(args, "until", false),
+          since: getString(args, "since", false) || undefined,
+          until: getString(args, "until", false) || undefined,
           limit: getNumber(args, "limit")
         });
 
-        return textResult({
-          total: results.length,
-          results
-        });
+        return textResult(results);
       }
 
       case "mem_timeline": {
-        const timeline = store.timeline({
+        const timeline = await client.timeline({
           id: getNumber(args, "id"),
-          query: getString(args, "query", false),
-          project: getString(args, "project", false),
+          query: getString(args, "query", false) || undefined,
+          project: getString(args, "project", false) || undefined,
           before: getNumber(args, "before"),
           after: getNumber(args, "after")
         });
@@ -272,14 +281,14 @@ async function handleToolCall(
 
       case "mem_get_entries": {
         const ids = getNumberArray(args, "ids", true);
-        const entries = store.getEntries(ids);
-        return textResult({ total: entries.length, entries });
+        const entries = await client.getEntries(ids);
+        return textResult(entries);
       }
 
       case "mem_context_pack": {
-        const context = buildContextPack(store, {
-          query: getString(args, "query", false),
-          project: getString(args, "project", false),
+        const context = await client.contextPack({
+          query: getString(args, "query", false) || undefined,
+          project: getString(args, "project", false) || undefined,
           limit: getNumber(args, "limit"),
           fullCount: getNumber(args, "fullCount")
         });
@@ -288,14 +297,14 @@ async function handleToolCall(
           content: [
             {
               type: "text",
-              text: context
+              text: context.context
             }
           ]
         };
       }
 
       case "mem_list_projects": {
-        return textResult({ projects: store.listProjects() });
+        return textResult(await client.listProjects());
       }
 
       default:
