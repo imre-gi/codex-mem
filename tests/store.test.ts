@@ -6,7 +6,7 @@ import { buildContextPack } from "../src/context-pack.js";
 import { MemoryStore } from "../src/store.js";
 
 function withStore(run: (store: MemoryStore) => void): void {
-  const dir = mkdtempSync(join(tmpdir(), "codex-mem-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "retentia-test-"));
   const file = join(dir, "memory.db");
   const store = new MemoryStore(file, "/tmp/demo-project");
   try {
@@ -82,7 +82,7 @@ describe("MemoryStore", () => {
       });
 
       const pack = buildContextPack(store, { query: "build", fullCount: 1 });
-      expect(pack).toContain("<codex-mem-context>");
+      expect(pack).toContain("<retentia-context>");
       expect(pack).toContain("# Memory Index");
       expect(pack).toContain("# Expanded Entries");
       expect(pack).toContain("Optimize build");

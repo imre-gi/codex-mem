@@ -6,17 +6,21 @@
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-111827)](https://modelcontextprotocol.io/)
 [![VS Code Extension](https://img.shields.io/badge/VS_Code-extension-007ACC?logo=visualstudiocode&logoColor=white)](./vscode-extension)
 
-Retentia is an open-source MCP memory and task execution intelligence layer for OpenAI Codex, Claude Code, Qwen, and Gwen. It gives you persistent SQLite-backed memory, multi-agent task tracking, and a VS Code dashboard for project and execution visibility.
+Retentia is an open-source MCP memory and task execution intelligence layer for OpenAI Codex, Claude Code, Qwen, and Gwen. It provides persistent SQLite-backed memory, multi-agent task tracking, and a visual VS Code dashboard for execution observability.
 
-Compatibility note: the current runnable CLI surface in this repository is still `codex-mem` (or `node dist/cli.js`). The public project name is Retentia.
+Compatibility note:
+- Primary CLI command is now `retentia`.
+- Legacy alias `codex-mem` is still supported.
+
+![Retentia Dashboard Preview](./docs/assets/retentia-dashboard-preview.png)
 
 ## Why Retentia
 
-- Keep AI-assisted coding context persistent across sessions and projects.
-- Track multi-agent pipeline execution by provider, model, agent, role, and status.
-- Use MCP-native memory tools directly from Codex-compatible clients.
-- Run fully local with a lightweight worker plus SQLite storage.
-- Inspect execution health with a visual dashboard and project/task explorers in VS Code.
+- Persist high-signal coding memory across sessions and repositories.
+- Observe multi-agent pipelines by provider, model, agent, role, and status.
+- Use MCP-native memory tools from Codex-compatible clients.
+- Keep data local with a lightweight worker and SQLite backend.
+- Inspect execution KPIs, project outcomes, and task history in VS Code.
 
 ## Table of Contents
 
@@ -41,16 +45,16 @@ Compatibility note: the current runnable CLI surface in this repository is still
 Retentia combines four capabilities in one local stack:
 
 - Persistent memory layer: observations and summaries in SQLite.
-- MCP tool server: `mem_*` tools exposed for Codex workflows.
-- Multi-LLM execution ingestion: import task execution from Codex, Claude Code, Qwen, and Gwen session logs.
-- Execution analytics UI: provider/model/agent/status visualizer plus project and task explorers in VS Code.
+- MCP server: `mem_*` tools for context capture/retrieval.
+- Multi-LLM ingestion: task execution import from Codex, Claude Code, Qwen, Gwen logs.
+- Visual analytics: provider/model/agent/status visualizer plus project/task explorers in VS Code.
 
 ## Use Cases
 
-- Solo coding memory continuity: keep durable notes of fixes, decisions, and discoveries.
-- Multi-agent observability: see which agent ran what task and final status.
-- Cross-project retrieval: search, timeline, and context-pack across repositories.
-- AI operations diagnostics: detect ingestion gaps, provider skew, and execution freshness.
+- Solo coding continuity: preserve bugfixes, decisions, and discoveries.
+- Multi-agent observability: identify which agent executed what and with which outcome.
+- Cross-project memory retrieval: use search, timeline, and context packs for fast re-priming.
+- AI operations diagnostics: detect ingestion gaps, provider skew, and task freshness.
 
 ## Quick Start
 
@@ -63,13 +67,11 @@ cd <repo-root>
 npm run install:vscode
 ```
 
-This installs dependencies, builds the CLI and extension, installs the VS Code extension locally, and runs setup.
-
 ### 2. Verify runtime state
 
 ```bash
 cd <repo-root>
-codex mcp get codex-mem
+codex mcp get retentia
 node dist/cli.js worker status
 node dist/cli.js kpis
 ```
@@ -78,14 +80,14 @@ node dist/cli.js kpis
 
 ```bash
 cd <repo-root>
-node dist/cli.js sync-tasks --providers all --lookback-days 7 --max-import 50
-node dist/cli.js execution-report --limit 200
+retentia sync-tasks --providers all --lookback-days 7 --max-import 50
+retentia execution-report --limit 200
 ```
 
-Then in VS Code command palette (`Ctrl+Shift+P`), run:
+Then in VS Code command palette (`Ctrl+Shift+P`) run:
 
-- `Codex Mem: Status Dashboard`
-- `Codex Mem: Project Explorer + Visualizer`
+- `Retentia: Status Dashboard`
+- `Retentia: Project Explorer + Visualizer`
 
 ## Feature Matrix
 
@@ -94,7 +96,7 @@ Then in VS Code command palette (`Ctrl+Shift+P`), run:
 | Memory CRUD (observation/summary) | Yes | Yes | Yes |
 | Search, timeline, context pack | Yes | Yes | Yes |
 | Project listing | Yes | Yes | Yes |
-| Multi-LLM task ingestion | Yes (`sync-tasks`) | No | Yes (dashboard sync / command) |
+| Multi-LLM task ingestion | Yes (`sync-tasks`) | No | Yes |
 | Execution report analytics | Yes (`execution-report`) | No | Yes |
 | Dashboard visualizer | No | No | Yes |
 | Project explorer | No | No | Yes |
@@ -102,7 +104,7 @@ Then in VS Code command palette (`Ctrl+Shift+P`), run:
 
 ## Architecture
 
-Retentia runtime has 3 core services plus the VS Code UI layer:
+Retentia runtime includes 3 core services plus the VS Code UI layer:
 
 1. Worker service (`src/worker-service.ts`)
 - Local HTTP service (default `127.0.0.1:37777`)
@@ -111,36 +113,30 @@ Retentia runtime has 3 core services plus the VS Code UI layer:
 
 2. MCP server (`src/mcp-server.ts`)
 - Exposes `mem_*` tools
-- Relays calls to the worker service
+- Relays requests to the worker
 
 3. CLI (`src/cli.ts`)
-- Setup/enabling, worker lifecycle, memory commands
+- Setup, MCP enablement, worker lifecycle, memory commands
 - Task ingestion (`sync-tasks`)
-- Analytics export (`execution-report`)
+- Execution analytics (`execution-report`)
 
 4. VS Code extension (`vscode-extension/src/extension.ts`)
-- Commands and settings UI
-- Dashboard with sync status, KPI cards, visualizer, and explorers
+- Dashboard, explorer, command palette integration, task sync UX
 
-### Ingestion and reporting flow
-
-```text
-Provider session logs
-  -> sync-tasks
-  -> stored observations (with execution metadata)
-  -> execution-report
-  -> VS Code dashboard (KPIs, visualizer, project/task explorer)
-```
+![Retentia Sync Flow](./docs/assets/retentia-sync-flow.png)
 
 ## CLI Command Reference
 
-All commands below are shown as runnable local commands:
+All command snippets below use the primary binary:
 
 ```bash
-node dist/cli.js <command>
+retentia <command>
 ```
 
-If you have a global binary, equivalent forms are available via `codex-mem <command>`.
+Equivalent forms:
+
+- `codex-mem <command>` (legacy alias)
+- `node dist/cli.js <command>` (direct script path)
 
 ### Global options
 
@@ -152,10 +148,10 @@ If you have a global binary, equivalent forms are available via `codex-mem <comm
 ### `setup`
 
 Purpose:
-- One-command onboarding: register MCP server and start worker.
+- Register MCP server and start worker in one step.
 
 Syntax:
-- `node dist/cli.js setup [--name <mcp-name>] [--host <host>] [--port <port>] [--data-file <path>]`
+- `retentia setup [--name <mcp-name>] [--host <host>] [--port <port>] [--data-file <path>]`
 
 Required args:
 - None.
@@ -166,11 +162,11 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js setup
+retentia setup
 ```
 
-Output and behavior:
-- Returns setup status, MCP enable result, and worker status.
+Output/behavior notes:
+- Returns setup status, MCP enable result, and worker metadata.
 - Idempotent for already configured setups.
 
 ### `enable`
@@ -179,7 +175,7 @@ Purpose:
 - Register or refresh MCP server entry in Codex config.
 
 Syntax:
-- `node dist/cli.js enable [--name <mcp-name>] [--host <host>] [--port <port>] [--data-file <path>]`
+- `retentia enable [--name <mcp-name>] [--host <host>] [--port <port>] [--data-file <path>]`
 
 Required args:
 - None.
@@ -190,21 +186,21 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js enable
+retentia enable
 ```
 
-Output and behavior:
-- Registers `codex-mem` MCP entry by default.
+Output/behavior notes:
+- Registers `retentia` MCP server by default.
 - Replaces conflicting same-name server entries.
-- Falls back to `npx --yes @openai/codex` if local `codex` binary is unavailable.
+- Falls back to `npx --yes @openai/codex` if local `codex` is unavailable.
 
 ### `mcp`
 
 Purpose:
-- Run MCP server over stdio for Codex to consume.
+- Start MCP stdio server for Codex.
 
 Syntax:
-- `node dist/cli.js mcp [--host <host>] [--port <port>] [--data-file <path>]`
+- `retentia mcp [--host <host>] [--port <port>] [--data-file <path>]`
 
 Required args:
 - None.
@@ -215,19 +211,19 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js mcp
+retentia mcp
 ```
 
-Output and behavior:
+Output/behavior notes:
 - Auto-starts worker if needed, then serves MCP tools.
 
 ### `worker start`
 
 Purpose:
-- Start background worker service.
+- Start background worker process.
 
 Syntax:
-- `node dist/cli.js worker start [--host <host>] [--port <port>] [--data-file <path>]`
+- `retentia worker start [--host <host>] [--port <port>] [--data-file <path>]`
 
 Required args:
 - None.
@@ -238,19 +234,19 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js worker start
+retentia worker start
 ```
 
-Output and behavior:
-- Starts daemonized worker and returns PID/status metadata.
+Output/behavior notes:
+- Starts daemonized worker and returns status payload.
 
 ### `worker stop`
 
 Purpose:
-- Stop background worker service.
+- Stop running worker process.
 
 Syntax:
-- `node dist/cli.js worker stop [--host <host>] [--port <port>]`
+- `retentia worker stop [--host <host>] [--port <port>]`
 
 Required args:
 - None.
@@ -261,19 +257,19 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js worker stop
+retentia worker stop
 ```
 
-Output and behavior:
-- Sends shutdown request to running worker.
+Output/behavior notes:
+- Sends shutdown request and confirms stop operation.
 
 ### `worker restart`
 
 Purpose:
-- Restart background worker service.
+- Restart worker process.
 
 Syntax:
-- `node dist/cli.js worker restart [--host <host>] [--port <port>] [--data-file <path>]`
+- `retentia worker restart [--host <host>] [--port <port>] [--data-file <path>]`
 
 Required args:
 - None.
@@ -284,19 +280,19 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js worker restart
+retentia worker restart
 ```
 
-Output and behavior:
-- Stops then starts worker and returns final status.
+Output/behavior notes:
+- Performs stop + start and returns final status.
 
 ### `worker status`
 
 Purpose:
-- Inspect worker runtime health.
+- Show worker health and runtime metadata.
 
 Syntax:
-- `node dist/cli.js worker status [--host <host>] [--port <port>] [--data-file <path>]`
+- `retentia worker status [--host <host>] [--port <port>] [--data-file <path>]`
 
 Required args:
 - None.
@@ -307,10 +303,10 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js worker status
+retentia worker status
 ```
 
-Output and behavior:
+Output/behavior notes:
 - Returns running state, PID, uptime, host/port, and base URL.
 
 ### `worker run`
@@ -319,7 +315,7 @@ Purpose:
 - Run worker in foreground mode for debugging.
 
 Syntax:
-- `node dist/cli.js worker run [--host <host>] [--port <port>] [--data-file <path>]`
+- `retentia worker run [--host <host>] [--port <port>] [--data-file <path>]`
 
 Required args:
 - None.
@@ -330,19 +326,19 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js worker run
+retentia worker run
 ```
 
-Output and behavior:
-- Keeps process attached to current shell until interrupted.
+Output/behavior notes:
+- Blocks terminal until interrupted.
 
 ### `init`
 
 Purpose:
-- Initialize storage and return readiness metadata.
+- Initialize storage and return readiness payload.
 
 Syntax:
-- `node dist/cli.js init [--data-file <path>]`
+- `retentia init [--data-file <path>]`
 
 Required args:
 - None.
@@ -353,19 +349,19 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js init
+retentia init
 ```
 
-Output and behavior:
-- Returns DB path and readiness status.
+Output/behavior notes:
+- Returns current data file path and worker status.
 
 ### `kpis`
 
 Purpose:
-- Return high-level memory and runtime metrics.
+- Return aggregate memory and runtime metrics.
 
 Syntax:
-- `node dist/cli.js kpis [--data-file <path>] [--host <host>] [--port <port>]`
+- `retentia kpis [--data-file <path>] [--host <host>] [--port <port>]`
 
 Required args:
 - None.
@@ -376,19 +372,19 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js kpis
+retentia kpis
 ```
 
-Output and behavior:
-- Includes entries, observations, summaries, project count, and oldest/latest timestamps.
+Output/behavior notes:
+- Includes entries, observations, summaries, projects, and oldest/latest timestamps.
 
 ### `add-observation`
 
 Purpose:
-- Store a concrete session observation (bugfix, discovery, decision, etc).
+- Store a concrete coding observation.
 
 Syntax:
-- `node dist/cli.js add-observation --title <text> --content <text> [options]`
+- `retentia add-observation --title <text> --content <text> [options]`
 
 Required args:
 - `--title`
@@ -405,24 +401,24 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js add-observation \
+retentia add-observation \
   --project Fred-Client \
-  --title "Fix worker status timeout" \
-  --content "Added retry and better error handling for stale pid files." \
+  --title "Fix worker timeout" \
+  --content "Added retry strategy for startup health checks." \
   --type bugfix \
   --tags worker,reliability
 ```
 
-Output and behavior:
-- Returns the created observation entry payload.
+Output/behavior notes:
+- Returns newly created observation entry payload.
 
 ### `add-summary`
 
 Purpose:
-- Store end-of-task summary context.
+- Store an end-of-task summary.
 
 Syntax:
-- `node dist/cli.js add-summary --learned <text> [options]`
+- `retentia add-summary --learned <text> [options]`
 
 Required args:
 - `--learned`
@@ -442,25 +438,25 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js add-summary \
-  --project codex-mem \
+retentia add-summary \
+  --project retentia \
   --request "Improve dashboard observability" \
-  --learned "Execution report needed provider and agent rollups." \
-  --completed "Added task explorer filters and sync metrics." \
-  --next-steps "Add trend charts for weekly changes." \
+  --learned "Execution rollups need provider and agent normalization." \
+  --completed "Added visualizer and task explorer filters." \
+  --next-steps "Add trend lines for weekly changes." \
   --tags dashboard,analytics
 ```
 
-Output and behavior:
-- Returns the created summary entry payload.
+Output/behavior notes:
+- Returns newly created summary entry payload.
 
 ### `search`
 
 Purpose:
-- Query memory entries with optional filters.
+- Query memory index with optional filters.
 
 Syntax:
-- `node dist/cli.js search [--query <text>] [--project <name>] [--kind <observation|summary>] [--since <ISO-8601>] [--until <ISO-8601>] [--limit <n>]`
+- `retentia search [--query <text>] [--project <name>] [--kind <observation|summary>] [--since <ISO-8601>] [--until <ISO-8601>] [--limit <n>]`
 
 Required args:
 - None.
@@ -471,22 +467,22 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js search --query "oauth" --project Fred-Client --limit 20
+retentia search --query "oauth" --project Fred-Client --limit 20
 ```
 
-Output and behavior:
-- Returns lightweight indexed results (id, title, excerpt, score).
+Output/behavior notes:
+- Returns lightweight indexed results (`id`, `title`, `excerpt`, `score`).
 
 ### `timeline`
 
 Purpose:
-- Fetch chronological context around an anchor memory entry.
+- Retrieve chronological context around an anchor entry.
 
 Syntax:
-- `node dist/cli.js timeline [--id <number> | --query <text>] [--project <name>] [--before <n>] [--after <n>]`
+- `retentia timeline [--id <number> | --query <text>] [--project <name>] [--before <n>] [--after <n>]`
 
 Required args:
-- One of: `--id` or `--query`.
+- One of `--id` or `--query`.
 
 Optional args:
 - `--project`, `--before`, `--after`.
@@ -494,11 +490,11 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js timeline --query "report export" --before 4 --after 6
+retentia timeline --query "task sync" --before 4 --after 6
 ```
 
-Output and behavior:
-- Resolves anchor entry then returns ordered nearby entries.
+Output/behavior notes:
+- Resolves anchor and returns nearby entries in chronological order.
 
 ### `get`
 
@@ -506,7 +502,7 @@ Purpose:
 - Fetch full entries by explicit IDs.
 
 Syntax:
-- `node dist/cli.js get --ids <id1,id2,id3>`
+- `retentia get --ids <id1,id2,id3>`
 
 Required args:
 - `--ids`
@@ -517,11 +513,11 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js get --ids 21,22,23
+retentia get --ids 21,22,23
 ```
 
-Output and behavior:
-- Returns full stored entry payloads in requested ID order when possible.
+Output/behavior notes:
+- Returns full entry payloads for requested IDs.
 
 ### `context`
 
@@ -529,7 +525,7 @@ Purpose:
 - Build compact prompt-ready context from memory.
 
 Syntax:
-- `node dist/cli.js context [--query <text>] [--project <name>] [--limit <n>] [--full-count <n>]`
+- `retentia context [--query <text>] [--project <name>] [--limit <n>] [--full-count <n>]`
 
 Required args:
 - None.
@@ -540,19 +536,19 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js context --query "task sync" --full-count 5
+retentia context --query "execution report" --full-count 5
 ```
 
-Output and behavior:
-- Prints compact context block suitable for priming AI sessions.
+Output/behavior notes:
+- Prints a compact context block for model priming.
 
 ### `list-projects`
 
 Purpose:
-- List project names known to memory store.
+- List project names stored in memory.
 
 Syntax:
-- `node dist/cli.js list-projects`
+- `retentia list-projects`
 
 Required args:
 - None.
@@ -563,19 +559,19 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js list-projects
+retentia list-projects
 ```
 
-Output and behavior:
+Output/behavior notes:
 - Returns deduplicated project list.
 
 ### `list-entries`
 
 Purpose:
-- List full entries with pagination and filtering.
+- List full entries with pagination and filters.
 
 Syntax:
-- `node dist/cli.js list-entries [--project <name>] [--kind <observation|summary>] [--since <ISO-8601>] [--until <ISO-8601>] [--limit <n>] [--offset <n>]`
+- `retentia list-entries [--project <name>] [--kind <observation|summary>] [--since <ISO-8601>] [--until <ISO-8601>] [--limit <n>] [--offset <n>]`
 
 Required args:
 - None.
@@ -586,19 +582,19 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js list-entries --project Fred-Client --kind observation --limit 100 --offset 0
+retentia list-entries --project Fred-Client --kind observation --limit 100 --offset 0
 ```
 
-Output and behavior:
-- Returns full entries sorted by newest first.
+Output/behavior notes:
+- Returns full entries sorted newest-first.
 
 ### `execution-report`
 
 Purpose:
-- Build analytics payload for visualizers and explorer views.
+- Build analytics payload for visualizer and explorer views.
 
 Syntax:
-- `node dist/cli.js execution-report [--project <name>] [--kind <observation|summary>] [--since <ISO-8601>] [--until <ISO-8601>] [--limit <n>] [--offset <n>]`
+- `retentia execution-report [--project <name>] [--kind <observation|summary>] [--since <ISO-8601>] [--until <ISO-8601>] [--limit <n>] [--offset <n>]`
 
 Required args:
 - None.
@@ -609,34 +605,34 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js execution-report --limit 600
+retentia execution-report --limit 600
 ```
 
-Output and behavior:
-- Returns project summaries plus provider/agent/model/status counts and normalized task rows.
+Output/behavior notes:
+- Returns project summaries and provider/agent/model/status rollups plus task rows.
 
 ### `sync-tasks`
 
 Purpose:
-- Import provider task execution events into memory entries.
+- Import local provider execution events into memory entries.
 
 Syntax:
-- `node dist/cli.js sync-tasks [--providers <codex,claude,qwen,gwen|all>] [--codex-path <path>] [--claude-path <path>] [--qwen-path <path>] [--gwen-path <path>] [--lookback-days <n>] [--max-files <n>] [--max-import <n>] [--project <fallback-name>]`
+- `retentia sync-tasks [--providers <codex,claude,qwen,gwen|all>] [--codex-path <path>] [--claude-path <path>] [--qwen-path <path>] [--gwen-path <path>] [--lookback-days <n>] [--max-files <n>] [--max-import <n>] [--project <fallback-name>]`
 
 Required args:
 - None.
 
 Optional args:
-- `--providers`, provider path overrides, `--lookback-days`, `--max-files`, `--max-import`, `--project`.
+- Provider list/path overrides plus lookback/import limits and fallback project.
 
 Example:
 
 ```bash
-node dist/cli.js sync-tasks --providers codex,claude --lookback-days 7 --max-files 24 --max-import 100
+retentia sync-tasks --providers codex,claude --lookback-days 7 --max-files 24 --max-import 100
 ```
 
-Output and behavior:
-- Returns detected/imported/skipped/failed totals and provider-level breakdown.
+Output/behavior notes:
+- Returns detected/imported/skipped/failed totals and provider breakdown.
 - Uses `externalKey` dedupe to avoid duplicate imports.
 
 ### `help`
@@ -645,9 +641,9 @@ Purpose:
 - Print CLI help and usage summary.
 
 Syntax:
-- `node dist/cli.js help`
-- `node dist/cli.js --help`
-- `node dist/cli.js -h`
+- `retentia help`
+- `retentia --help`
+- `retentia -h`
 
 Required args:
 - None.
@@ -658,15 +654,13 @@ Optional args:
 Example:
 
 ```bash
-node dist/cli.js --help
+retentia --help
 ```
 
-Output and behavior:
-- Prints command list and global option descriptions.
+Output/behavior notes:
+- Prints command list and global options.
 
 ## MCP Tools Reference
-
-The MCP server exposes the following tools.
 
 ### `mem_add_observation`
 
@@ -680,12 +674,12 @@ Optional input:
 - `project`, `sessionId`, `externalKey`, `observationType`, `tags[]`, `files[]`
 
 Typical usage moment:
-- After finishing a fix, discovery, or decision that should be reusable later.
+- After a bugfix, discovery, or design decision worth preserving.
 
 ### `mem_add_summary`
 
 Purpose:
-- Persist end-of-task learned/completed context.
+- Persist end-of-task summary context.
 
 Required input:
 - `learned`
@@ -694,7 +688,7 @@ Optional input:
 - `project`, `sessionId`, `externalKey`, `request`, `investigated`, `completed`, `nextSteps`, `tags[]`, `filesRead[]`, `filesEdited[]`
 
 Typical usage moment:
-- End of a coding task, handoff, or checkpoint.
+- Task handoff or session close-out.
 
 ### `mem_search`
 
@@ -708,7 +702,7 @@ Optional input:
 - `query`, `project`, `kind`, `since`, `until`, `limit`
 
 Typical usage moment:
-- Before implementing related work to recover prior context quickly.
+- Before implementing related work to recover context quickly.
 
 ### `mem_timeline`
 
@@ -716,13 +710,13 @@ Purpose:
 - Retrieve chronological context around an anchor memory item.
 
 Required input:
-- None (but should provide `id` or `query`).
+- None (but provide `id` or `query` for meaningful output).
 
 Optional input:
 - `id`, `query`, `project`, `before`, `after`
 
 Typical usage moment:
-- Reconstructing sequence of events for debugging or incident analysis.
+- Reconstructing event sequences during debugging.
 
 ### `mem_get_entries`
 
@@ -736,12 +730,12 @@ Optional input:
 - None.
 
 Typical usage moment:
-- Expanding lightweight search results into full details.
+- Expanding search results to full details.
 
 ### `mem_context_pack`
 
 Purpose:
-- Build compact context block for prompt priming.
+- Build compact context for prompt priming.
 
 Required input:
 - None.
@@ -750,7 +744,7 @@ Optional input:
 - `query`, `project`, `limit`, `fullCount`
 
 Typical usage moment:
-- Starting a new AI session with compressed but high-signal historical context.
+- Starting a new model session with compressed history.
 
 ### `mem_list_projects`
 
@@ -764,149 +758,124 @@ Optional input:
 - None.
 
 Typical usage moment:
-- Discovering project namespaces before filtering searches or timeline requests.
+- Selecting project scope before filtering searches.
 
 ## VS Code Dashboard and Explorer Capabilities
 
 The extension dashboard provides:
 
-- KPI cards: entries, observations, summaries, projects, providers, agents.
-- Runtime and MCP status: worker state, uptime, endpoint, MCP command args, DB file.
+- KPI cards: worker, MCP, tasks, projects, provider and agent counts.
+- Runtime panel: PID, uptime, endpoint, MCP config command/args, DB path.
 - Provider sync matrix: detected/imported/skipped/failed by provider.
-- Execution visualizer: distribution bars by provider, status, agent, model.
-- Project explorer: project-level totals, done/failed counts, latest activity.
-- Task explorer: interactive filters by project/provider/agent/model/status.
+- Execution visualizer: distributions by provider, status, agent, model.
+- Project explorer: task outcomes aggregated per project.
+- Task explorer: filters by project/provider/agent/model/status.
 
 ## Configuration Reference
 
 ### Environment variables
 
-- `CODEX_MEM_DB_FILE`: primary DB file override.
-- `CODEX_MEM_DATA_FILE`: backward compatible alias for DB file override.
+- `RETENTIA_DB_FILE`: primary DB file override.
+- `CODEX_MEM_DB_FILE`: legacy DB file override (still supported).
+- `CODEX_MEM_DATA_FILE`: legacy alias override (still supported).
+- `RETENTIA_WORKER_HOST` / `RETENTIA_WORKER_PORT`: worker host/port overrides.
+- `CODEX_MEM_WORKER_HOST` / `CODEX_MEM_WORKER_PORT`: legacy worker env aliases.
 
-Default database path:
-
-```text
-~/.codex-mem/codex-mem.db
-```
-
-Worker logs:
+Default data paths:
 
 ```text
-~/.codex-mem/logs/worker-YYYY-MM-DD.log
+~/.retentia/retentia.db
+~/.retentia/worker.pid
+~/.retentia/logs/worker-YYYY-MM-DD.log
 ```
 
-Worker PID file:
-
-```text
-~/.codex-mem/worker.pid
-```
+Legacy migration note:
+- If an existing `~/.codex-mem/codex-mem.db` is detected and no new DB exists, Retentia reuses the legacy DB path automatically.
 
 ### VS Code settings (`codexMem.*`)
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `codexMem.cliPath` | `""` | Explicit path to CLI binary or `dist/cli.js`. |
+| `codexMem.cliPath` | `""` | Explicit CLI path override. |
 | `codexMem.defaultProject` | `""` | Default project when creating entries. |
-| `codexMem.autoSyncCodexTasks` | `true` | Auto-sync task execution on dashboard refresh. |
+| `codexMem.autoSyncCodexTasks` | `true` | Auto-sync execution events on refresh. |
 | `codexMem.enabledProviders` | `["codex","claude","qwen","gwen"]` | Providers included in sync. |
-| `codexMem.autoSyncLookbackDays` | `7` | Lookback window for provider session logs. |
+| `codexMem.autoSyncLookbackDays` | `7` | Lookback window in days. |
 | `codexMem.autoSyncMaxImport` | `25` | Max new tasks imported per sync run. |
-| `codexMem.autoSyncMaxFiles` | `24` | Max recent session files scanned per provider. |
+| `codexMem.autoSyncMaxFiles` | `24` | Max session files scanned per provider. |
 | `codexMem.codexSessionsPath` | `""` | Optional Codex sessions path override. |
 | `codexMem.claudeSessionsPath` | `""` | Optional Claude sessions path override. |
 | `codexMem.qwenSessionsPath` | `""` | Optional Qwen sessions path override. |
 | `codexMem.gwenSessionsPath` | `""` | Optional Gwen sessions path override. |
-| `codexMem.executionReportLimit` | `600` | Max entries loaded for visualizer/explorers. |
+| `codexMem.executionReportLimit` | `600` | Max entries loaded for visualizer/explorer views. |
 
 ## Troubleshooting
 
 ### Command palette commands are missing
 
-1. Run from repo root:
-
 ```bash
+cd <repo-root>
 npm run reinstall:vscode
 ```
 
-2. In VS Code, run `Developer: Reload Window`.
-3. Open command palette and search `Codex Mem`.
+Then in VS Code:
 
-For profile-specific install:
+1. Run `Developer: Reload Window`.
+2. Open command palette and search `Retentia`.
+
+For profile-specific reinstall:
 
 ```bash
+cd <repo-root>
 CODEX_MEM_VSCODE_PROFILE="<profile-name>" npm run reinstall:vscode
 ```
 
 ### Worker startup issues
 
-Check status and log output:
-
 ```bash
-node dist/cli.js worker status
-cat ~/.codex-mem/logs/worker-$(date +%F).log
-```
-
-If needed, restart:
-
-```bash
-node dist/cli.js worker restart
+retentia worker status
+cat ~/.retentia/logs/worker-$(date +%F).log
 ```
 
 ### MCP registration not visible
 
-Verify:
-
 ```bash
 codex mcp list
-codex mcp get codex-mem
-```
-
-Re-register:
-
-```bash
-node dist/cli.js setup
+codex mcp get retentia
+retentia setup
 ```
 
 ### Dashboard shows empty tasks
 
-What it means:
-- No memory writes were recorded yet, or sync has not imported task execution events.
-
-Actions:
-
 ```bash
-node dist/cli.js sync-tasks --providers all --lookback-days 7 --max-import 50
-node dist/cli.js kpis
+retentia sync-tasks --providers all --lookback-days 7 --max-import 50
+retentia kpis
 ```
 
 Then refresh dashboard in VS Code.
 
-### CLI discovery path issues in VS Code
+### CLI discovery issues in VS Code
 
 Set `codexMem.cliPath` to one of:
 
 - `<repo-root>/dist/cli.js`
-- `codex-mem` (if globally installed)
+- `retentia`
+- `codex-mem` (legacy alias)
 
 ### Port conflicts
 
-Use a different port:
-
 ```bash
-node dist/cli.js worker start --port 37888
-node dist/cli.js mcp --port 37888
+retentia worker start --port 37888
+retentia mcp --port 37888
 ```
 
 ## Contributing
 
-PR flow expectations:
-
-1. Open an issue describing the problem or proposal.
-2. Keep changes focused and reviewable.
-3. Include tests for behavior changes when applicable.
-4. Update README/docs when command or behavior changes.
-5. Run before opening PR:
+1. Open an issue for bug/feature proposals.
+2. Keep PRs focused and reviewable.
+3. Add tests for behavior changes when applicable.
+4. Update docs when command behavior or interfaces change.
+5. Run before submitting:
 
 ```bash
 npm run build
@@ -914,43 +883,37 @@ npm test
 npm --prefix vscode-extension run build
 ```
 
-Issue quality expectations:
-
-- Include environment details (OS, Node version, provider).
-- Include reproducible steps and expected vs actual behavior.
-- Include relevant CLI output snippets when reporting bugs.
-
 ## Security
 
-If you discover a security issue, do not post sensitive exploit details in a public issue.
+Please avoid posting sensitive exploit details in public issues.
 
-Use GitHub Security Advisories for private disclosure if available for this repository, or contact the maintainer directly through repository contact channels.
+Use GitHub Security Advisories (if enabled) or contact the maintainer through repository channels for private disclosure.
 
 ## FAQ
 
 ### Is Retentia Codex-only?
 
-No. Ingestion supports Codex, Claude Code, Qwen, and Gwen logs. MCP tooling remains Codex-compatible by default.
+No. Ingestion supports Codex, Claude Code, Qwen, and Gwen session logs.
 
-### Do I need VS Code to use Retentia?
+### Do I need VS Code?
 
-No. CLI and MCP server are fully usable without VS Code.
+No. CLI and MCP server are fully usable standalone.
 
-### Can I run everything locally?
+### Is legacy `codex-mem` still usable?
 
-Yes. Worker, storage, and ingestion run locally on your machine.
+Yes. `codex-mem` remains available as a compatibility CLI alias.
 
-### Why are command examples using `codex-mem` while project name is Retentia?
+### Why are settings still `codexMem.*`?
 
-Retentia is the public product name. Current runnable command identifiers remain `codex-mem` in this repository.
+For backward compatibility with existing VS Code user/workspace settings. Command IDs and settings prefixes can be migrated in a later major release.
 
 ## Roadmap
 
-- Add trend views for execution over time (daily/weekly).
-- Expand provider parsers for richer model/agent metadata extraction.
-- Add import dry-run mode and diff preview.
-- Improve setup diagnostics for multi-profile VS Code environments.
-- Publish packaged extension workflow for public marketplace distribution.
+- Add execution trend charts (daily/weekly deltas).
+- Improve parser coverage for richer provider-specific metadata.
+- Add sync dry-run and import diff preview.
+- Provide migration tooling for `codexMem.*` to `retentia.*` extension settings.
+- Add release workflow for marketplace-ready extension distribution.
 
 ## License
 

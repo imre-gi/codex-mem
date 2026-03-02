@@ -121,10 +121,10 @@ interface TaskSyncMetrics {
   }>;
 }
 
-const OUTPUT = vscode.window.createOutputChannel("Codex Mem");
+const OUTPUT = vscode.window.createOutputChannel("Retentia");
 const DASHBOARD_VIEW_TYPE = "codexMem.statusDashboard.view";
-const DASHBOARD_TITLE = "Codex Mem Dashboard";
-const MCP_SERVER_SECTION = "mcp_servers.codex-mem";
+const DASHBOARD_TITLE = "Retentia Dashboard";
+const MCP_SERVER_SECTIONS = ["mcp_servers.retentia", "mcp_servers.codex-mem"];
 const CODEX_CONFIG_PATH = join(homedir(), ".codex", "config.toml");
 const DEFAULT_AUTO_SYNC_LOOKBACK_DAYS = 7;
 const DEFAULT_AUTO_SYNC_MAX_IMPORT = 25;
@@ -133,46 +133,46 @@ const DEFAULT_EXECUTION_REPORT_LIMIT = 600;
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(OUTPUT);
-  OUTPUT.appendLine("Codex Mem extension activated.");
+  OUTPUT.appendLine("Retentia extension activated.");
   let dashboardPanel: vscode.WebviewPanel | undefined;
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.setup", async () => {
       await runAndShowJson(
         ["setup"],
-        "Codex Mem setup complete. MCP enabled and worker started."
+        "Retentia setup complete. MCP enabled and worker started."
       );
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.enableMcp", async () => {
-      await runAndShowJson(["enable"], "Codex Mem MCP registration completed.");
+      await runAndShowJson(["enable"], "Retentia MCP registration completed.");
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.initStore", async () => {
-      await runAndShowJson(["init"], "codex-mem store initialized");
+      await runAndShowJson(["init"], "retentia store initialized");
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.startWorker", async () => {
-      await runAndShowJson(["worker", "start"], "Codex Mem worker started.");
+      await runAndShowJson(["worker", "start"], "Retentia worker started.");
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.stopWorker", async () => {
-      await runAndShowJson(["worker", "stop"], "Codex Mem worker stopped.");
+      await runAndShowJson(["worker", "stop"], "Retentia worker stopped.");
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.workerStatus", async () => {
       const status = await runCliJson(["worker", "status"]);
-      await openJsonDocument(status, "codex-mem-worker-status.json");
+      await openJsonDocument(status, "retentia-worker-status.json");
     })
   );
 
@@ -227,20 +227,20 @@ export function activate(context: vscode.ExtensionContext): void {
           if (cmd === "setup") {
             await runAndShowJson(
               ["setup"],
-              "Codex Mem setup complete. MCP enabled and worker started."
+              "Retentia setup complete. MCP enabled and worker started."
             );
             await renderDashboardPanel(dashboardPanel);
             return;
           }
 
           if (cmd === "start-worker") {
-            await runAndShowJson(["worker", "start"], "Codex Mem worker started.");
+            await runAndShowJson(["worker", "start"], "Retentia worker started.");
             await renderDashboardPanel(dashboardPanel);
             return;
           }
 
           if (cmd === "stop-worker") {
-            await runAndShowJson(["worker", "stop"], "Codex Mem worker stopped.");
+            await runAndShowJson(["worker", "stop"], "Retentia worker stopped.");
             await renderDashboardPanel(dashboardPanel);
             return;
           }
@@ -274,7 +274,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.addObservation", async () => {
       const title = await vscode.window.showInputBox({
-        title: "Codex Mem: Observation Title",
+        title: "Retentia: Observation Title",
         prompt: "Short title",
         ignoreFocusOut: true,
         validateInput: (value) => (value.trim() ? undefined : "Title is required")
@@ -284,7 +284,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       const content = await vscode.window.showInputBox({
-        title: "Codex Mem: Observation Content",
+        title: "Retentia: Observation Content",
         prompt: "Detailed observation",
         ignoreFocusOut: true,
         validateInput: (value) =>
@@ -297,7 +297,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const type = await vscode.window.showQuickPick(
         ["note", "bugfix", "feature", "refactor", "discovery", "decision", "change"],
         {
-          title: "Codex Mem: Observation Type",
+          title: "Retentia: Observation Type",
           canPickMany: false,
           ignoreFocusOut: true
         }
@@ -307,13 +307,13 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       const tags = await vscode.window.showInputBox({
-        title: "Codex Mem: Tags (optional)",
+        title: "Retentia: Tags (optional)",
         prompt: "Comma-separated tags",
         ignoreFocusOut: true
       });
 
       const files = await vscode.window.showInputBox({
-        title: "Codex Mem: Files (optional)",
+        title: "Retentia: Files (optional)",
         prompt: "Comma-separated file paths",
         ignoreFocusOut: true
       });
@@ -350,7 +350,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.addSummary", async () => {
       const learned = await vscode.window.showInputBox({
-        title: "Codex Mem: Learned",
+        title: "Retentia: Learned",
         prompt: "What was learned",
         ignoreFocusOut: true,
         validateInput: (value) => (value.trim() ? undefined : "Learned is required")
@@ -360,19 +360,19 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       const request = await vscode.window.showInputBox({
-        title: "Codex Mem: Request (optional)",
+        title: "Retentia: Request (optional)",
         prompt: "Original request summary",
         ignoreFocusOut: true
       });
 
       const completed = await vscode.window.showInputBox({
-        title: "Codex Mem: Completed (optional)",
+        title: "Retentia: Completed (optional)",
         prompt: "What was completed",
         ignoreFocusOut: true
       });
 
       const nextSteps = await vscode.window.showInputBox({
-        title: "Codex Mem: Next Steps (optional)",
+        title: "Retentia: Next Steps (optional)",
         prompt: "What should happen next",
         ignoreFocusOut: true
       });
@@ -401,7 +401,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.search", async () => {
       const query = await vscode.window.showInputBox({
-        title: "Codex Mem: Search",
+        title: "Retentia: Search",
         prompt: "Search query",
         ignoreFocusOut: true
       });
@@ -442,7 +442,7 @@ export function activate(context: vscode.ExtensionContext): void {
       });
 
       const picked = await vscode.window.showQuickPick(picks, {
-        title: "Codex Mem: Search Results",
+        title: "Retentia: Search Results",
         placeHolder: "Select an entry to open details",
         ignoreFocusOut: true
       });
@@ -452,14 +452,14 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       const entryResult = await runCliJson(["get", "--ids", String(picked.id)]);
-      await openJsonDocument(entryResult, `codex-mem-entry-${picked.id}.json`);
+      await openJsonDocument(entryResult, `retentia-entry-${picked.id}.json`);
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.contextPack", async () => {
       const query = await vscode.window.showInputBox({
-        title: "Codex Mem: Context Pack Query",
+        title: "Retentia: Context Pack Query",
         prompt: "Optional query",
         ignoreFocusOut: true
       });
@@ -478,7 +478,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       const output = await runCliRaw(args);
-      await openTextDocument(output, "markdown", "codex-mem-context.md");
+      await openTextDocument(output, "markdown", "retentia-context.md");
     })
   );
 
@@ -524,7 +524,7 @@ async function runCliJson(args: string[]): Promise<JsonResult> {
     return JSON.parse(raw) as JsonResult;
   } catch (error) {
     throw new Error(
-      `Expected JSON from codex-mem, got: ${raw.slice(0, 280)}${
+      `Expected JSON from retentia, got: ${raw.slice(0, 280)}${
         raw.length > 280 ? "..." : ""
       }`
     );
@@ -558,10 +558,10 @@ async function runCliRaw(args: string[]): Promise<string> {
 
     child.on("error", (error) => {
       const message = [
-        `Failed to start codex-mem CLI: ${error.message}`,
+        `Failed to start retentia CLI: ${error.message}`,
         `Set 'codexMem.cliPath' in VS Code settings, or ensure one of these exists:`,
         ...getAutoDetectCandidates(cwd).map((candidate) => `- ${candidate}`),
-        `Or make sure 'codex-mem' is on PATH.`
+        `Or make sure 'retentia' (or legacy 'codex-mem') is on PATH.`
       ].join("\n");
       OUTPUT.appendLine(message);
       reject(new Error(message));
@@ -574,7 +574,7 @@ async function runCliRaw(args: string[]): Promise<string> {
       }
 
       const message =
-        `codex-mem command failed (exit ${code}).\n${stderr || stdout}`;
+        `retentia command failed (exit ${code}).\n${stderr || stdout}`;
       OUTPUT.appendLine(message);
       reject(new Error(message));
     });
@@ -609,12 +609,15 @@ function resolveCli(workspaceRoot: string): CliResolution {
     }
   }
 
-  return { command: "codex-mem", baseArgs: [] };
+  return { command: "retentia", baseArgs: [] };
 }
 
 function getAutoDetectCandidates(workspaceRoot: string): string[] {
   const candidates = [
     join(workspaceRoot, "..", "dist", "cli.js"),
+    join(workspaceRoot, "retentia", "dist", "cli.js"),
+    join(workspaceRoot, "..", "retentia", "dist", "cli.js"),
+    join(workspaceRoot, "..", "..", "retentia", "dist", "cli.js"),
     join(workspaceRoot, "codex-mem", "dist", "cli.js"),
     join(workspaceRoot, "..", "codex-mem", "dist", "cli.js"),
     join(workspaceRoot, "..", "..", "codex-mem", "dist", "cli.js")
@@ -1010,7 +1013,10 @@ function readMcpStatus(): DashboardData["mcp"] {
       }
 
       if (trimmed.startsWith("[")) {
-        if (trimmed === `[${MCP_SERVER_SECTION}]`) {
+        const inKnownSection = MCP_SERVER_SECTIONS.some(
+          (section) => trimmed === `[${section}]`
+        );
+        if (inKnownSection) {
           inSection = true;
           foundSection = true;
           continue;
@@ -1132,7 +1138,7 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
       content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Codex Mem Dashboard</title>
+    <title>Retentia Dashboard</title>
     <style>
       :root {
         color-scheme: dark;
@@ -1459,7 +1465,7 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
     <div class="wrap">
       <div class="topbar">
         <div>
-          <div class="title">Codex Mem Dashboard</div>
+          <div class="title">Retentia Dashboard</div>
           <div class="subtitle">Updated ${escapeHtml(formatIso(data.generatedAt))}</div>
         </div>
         <div class="actions">

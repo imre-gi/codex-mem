@@ -30,28 +30,30 @@ for (const profile of [...new Set(profiles)]) {
 NODE
 }
 
-echo "[codex-mem] Installing root dependencies"
+echo "[retentia] Installing root dependencies"
 npm install --prefix "$ROOT_DIR"
 
-echo "[codex-mem] Installing VS Code extension dependencies"
+echo "[retentia] Installing VS Code extension dependencies"
 npm install --prefix "$ROOT_DIR/vscode-extension"
 
-echo "[codex-mem] Building codex-mem"
+echo "[retentia] Building retentia"
 npm run build --prefix "$ROOT_DIR"
 
-echo "[codex-mem] Installing VS Code extension"
+echo "[retentia] Installing VS Code extension"
 npm run install:local --prefix "$ROOT_DIR/vscode-extension"
 
-VSIX_FILE="$ROOT_DIR/vscode-extension/codex-mem-vscode-0.1.1.vsix"
+EXT_NAME="$(node -p "require('$ROOT_DIR/vscode-extension/package.json').name")"
+EXT_VERSION="$(node -p "require('$ROOT_DIR/vscode-extension/package.json').version")"
+VSIX_FILE="$ROOT_DIR/vscode-extension/${EXT_NAME}-${EXT_VERSION}.vsix"
 while IFS= read -r profile; do
   if [[ -n "$profile" ]]; then
-    echo "[codex-mem] Installing extension in profile: $profile"
+    echo "[retentia] Installing extension in profile: $profile"
     code --install-extension "$VSIX_FILE" --force --profile "$profile"
   fi
 done < <(list_profiles)
 
-echo "[codex-mem] Enabling MCP and starting worker"
+echo "[retentia] Enabling MCP and starting worker"
 node "$ROOT_DIR/dist/cli.js" setup
 
-echo "[codex-mem] Install complete"
-echo "[codex-mem] If commands do not appear immediately, run 'Developer: Reload Window' in VS Code."
+echo "[retentia] Install complete"
+echo "[retentia] If commands do not appear immediately, run 'Developer: Reload Window' in VS Code."

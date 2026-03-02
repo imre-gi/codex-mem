@@ -1,0 +1,58 @@
+<svg width="1200" height="320" viewBox="0 0 1200 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#23344A"/>
+      <stop offset="1" stop-color="#15263A"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#6FA8DC" />
+    </marker>
+  </defs>
+  <rect width="1200" height="320" fill="#0D1624"/>
+  <text x="32" y="44" fill="#E9F1FB" font-size="28" font-family="Segoe UI, Arial" font-weight="700">Retentia Ingestion and Analytics Flow</text>
+  <text x="32" y="70" fill="#9DB3CB" font-size="15" font-family="Segoe UI, Arial">From provider session logs to dashboard intelligence.</text>
+
+  <g transform="translate(32 110)">
+    <rect width="214" height="132" rx="14" fill="url(#g1)" stroke="#355173"/>
+    <text x="16" y="34" fill="#DCEBFB" font-size="17" font-family="Segoe UI" font-weight="600">Session Logs</text>
+    <text x="16" y="62" fill="#A9C2DB" font-size="13" font-family="Segoe UI">Codex</text>
+    <text x="16" y="84" fill="#A9C2DB" font-size="13" font-family="Segoe UI">Claude Code</text>
+    <text x="16" y="106" fill="#A9C2DB" font-size="13" font-family="Segoe UI">Qwen / Gwen</text>
+  </g>
+
+  <g transform="translate(296 110)">
+    <rect width="214" height="132" rx="14" fill="url(#g1)" stroke="#355173"/>
+    <text x="16" y="34" fill="#DCEBFB" font-size="17" font-family="Segoe UI" font-weight="600">sync-tasks</text>
+    <text x="16" y="62" fill="#A9C2DB" font-size="13" font-family="Segoe UI">Parse + normalize events</text>
+    <text x="16" y="84" fill="#A9C2DB" font-size="13" font-family="Segoe UI">Provider interleaving</text>
+    <text x="16" y="106" fill="#A9C2DB" font-size="13" font-family="Segoe UI">externalKey dedupe</text>
+  </g>
+
+  <g transform="translate(560 110)">
+    <rect width="214" height="132" rx="14" fill="url(#g1)" stroke="#355173"/>
+    <text x="16" y="34" fill="#DCEBFB" font-size="17" font-family="Segoe UI" font-weight="600">SQLite Memory</text>
+    <text x="16" y="62" fill="#A9C2DB" font-size="13" font-family="Segoe UI">Observations / summaries</text>
+    <text x="16" y="84" fill="#A9C2DB" font-size="13" font-family="Segoe UI">Provider metadata tags</text>
+    <text x="16" y="106" fill="#A9C2DB" font-size="13" font-family="Segoe UI">Timeline + search index</text>
+  </g>
+
+  <g transform="translate(824 110)">
+    <rect width="214" height="132" rx="14" fill="url(#g1)" stroke="#355173"/>
+    <text x="16" y="34" fill="#DCEBFB" font-size="17" font-family="Segoe UI" font-weight="600">execution-report</text>
+    <text x="16" y="62" fill="#A9C2DB" font-size="13" font-family="Segoe UI">Project summaries</text>
+    <text x="16" y="84" fill="#A9C2DB" font-size="13" font-family="Segoe UI">Provider / agent rollups</text>
+    <text x="16" y="106" fill="#A9C2DB" font-size="13" font-family="Segoe UI">Task table payload</text>
+  </g>
+
+  <g transform="translate(1088 110)">
+    <rect width="80" height="132" rx="14" fill="url(#g1)" stroke="#355173"/>
+    <text x="12" y="34" fill="#DCEBFB" font-size="17" font-family="Segoe UI" font-weight="600">UI</text>
+    <text x="12" y="62" fill="#A9C2DB" font-size="13" font-family="Segoe UI">VS</text>
+    <text x="12" y="80" fill="#A9C2DB" font-size="13" font-family="Segoe UI">Code</text>
+  </g>
+
+  <path d="M250 176 H286" stroke="#6FA8DC" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M514 176 H550" stroke="#6FA8DC" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M778 176 H814" stroke="#6FA8DC" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M1042 176 H1080" stroke="#6FA8DC" stroke-width="3" marker-end="url(#arrow)"/>
+</svg>

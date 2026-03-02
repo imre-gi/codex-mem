@@ -22,10 +22,10 @@ export function buildContextPack(
 
   if (results.length === 0) {
     return [
-      "<codex-mem-context>",
+      "<retentia-context>",
       "# Memory Index",
       "No matching entries found.",
-      "</codex-mem-context>"
+      "</retentia-context>"
     ].join("\n");
   }
 
@@ -35,7 +35,7 @@ export function buildContextPack(
   );
 
   const lines: string[] = [
-    "<codex-mem-context>",
+    "<retentia-context>",
     "# Memory Index",
     "",
     ...results.map(formatIndexRow),
@@ -57,7 +57,7 @@ export function buildContextPack(
     }
   }
 
-  lines.push("</codex-mem-context>");
+  lines.push("</retentia-context>");
 
   return lines.join("\n");
 }

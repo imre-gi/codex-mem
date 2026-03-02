@@ -14,7 +14,7 @@ function withTempStore(
     claudeDir: string;
   }) => void
 ): void {
-  const rootDir = mkdtempSync(join(tmpdir(), "codex-mem-sync-test-"));
+  const rootDir = mkdtempSync(join(tmpdir(), "retentia-sync-test-"));
   const dbFile = join(rootDir, "memory.db");
   const codexDir = join(rootDir, "codex-sessions");
   const claudeDir = join(rootDir, "claude-projects");

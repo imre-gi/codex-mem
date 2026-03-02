@@ -1,10 +1,11 @@
 {
-  "name": "vscode-llm-mem",
+  "name": "retentia",
   "version": "0.2.0",
   "description": "Persistent project memory MCP plugin for OpenAI Codex, Claude Code, and other major LLMs.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
+    "retentia": "dist/cli.js",
     "codex-mem": "dist/cli.js"
   },
   "files": [
@@ -27,13 +28,21 @@
     "start": "node dist/cli.js mcp"
   },
   "keywords": [
+    "retentia",
     "codex",
     "mcp",
     "memory",
-    "plugin"
+    "plugin",
+    "claude",
+    "qwen",
+    "multi-agent"
   ],
   "author": "imre_gi",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/imre-gi/codex-mem.git"
+  },
   "engines": {
     "node": ">=20"
   },

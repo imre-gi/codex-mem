@@ -75,7 +75,7 @@ async function routeRequest(
   if (method === "GET" && url === "/api/health") {
     sendJson(res, 200, {
       ok: true,
-      service: "codex-mem-worker",
+      service: "retentia-worker",
       host,
       port,
       dataFile: store.getDataFilePath(),

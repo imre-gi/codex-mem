@@ -1,10 +1,15 @@
 {
-  "name": "codex-mem-vscode",
-  "displayName": "Codex Mem",
-  "description": "Persistent memory commands for codex-mem inside VS Code",
+  "name": "retentia-vscode",
+  "displayName": "Retentia",
+  "description": "Persistent memory commands for Retentia inside VS Code",
   "version": "0.1.1",
   "publisher": "local",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/imre-gi/codex-mem.git",
+    "directory": "vscode-extension"
+  },
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -34,72 +39,72 @@
     "commands": [
       {
         "command": "codexMem.setup",
-        "title": "Codex Mem: Setup (Enable + Start Worker)"
+        "title": "Retentia: Setup (Enable + Start Worker)"
       },
       {
         "command": "codexMem.enableMcp",
-        "title": "Codex Mem: Enable MCP"
+        "title": "Retentia: Enable MCP"
       },
       {
         "command": "codexMem.initStore",
-        "title": "Codex Mem: Initialize Store"
+        "title": "Retentia: Initialize Store"
       },
       {
         "command": "codexMem.startWorker",
-        "title": "Codex Mem: Start Worker"
+        "title": "Retentia: Start Worker"
       },
       {
         "command": "codexMem.stopWorker",
-        "title": "Codex Mem: Stop Worker"
+        "title": "Retentia: Stop Worker"
       },
       {
         "command": "codexMem.workerStatus",
-        "title": "Codex Mem: Worker Status"
+        "title": "Retentia: Worker Status"
       },
       {
         "command": "codexMem.syncCodexTasks",
-        "title": "Codex Mem: Sync LLM Tasks (Codex/Claude/Qwen/Gwen)"
+        "title": "Retentia: Sync LLM Tasks (Codex/Claude/Qwen/Gwen)"
       },
       {
         "command": "codexMem.projectExplorer",
-        "title": "Codex Mem: Project Explorer + Visualizer"
+        "title": "Retentia: Project Explorer + Visualizer"
       },
       {
         "command": "codexMem.statusDashboard",
-        "title": "Codex Mem: Status Dashboard"
+        "title": "Retentia: Status Dashboard"
       },
       {
         "command": "codexMem.openSettings",
-        "title": "Codex Mem: Open Settings"
+        "title": "Retentia: Open Settings"
       },
       {
         "command": "codexMem.addObservation",
-        "title": "Codex Mem: Add Observation"
+        "title": "Retentia: Add Observation"
       },
       {
         "command": "codexMem.addSummary",
-        "title": "Codex Mem: Add Summary"
+        "title": "Retentia: Add Summary"
       },
       {
         "command": "codexMem.search",
-        "title": "Codex Mem: Search Memory"
+        "title": "Retentia: Search Memory"
       },
       {
         "command": "codexMem.contextPack",
-        "title": "Codex Mem: Generate Context Pack"
+        "title": "Retentia: Generate Context Pack"
       },
       {
         "command": "codexMem.openMemoryFile",
-        "title": "Codex Mem: Open Memory File"
+        "title": "Retentia: Open Memory File"
       }
     ],
     "configuration": {
-      "title": "Codex Mem",
+      "title": "Retentia",
       "properties": {
         "codexMem.cliPath": {
           "type": "string",
           "default": "",
-          "description": "Optional absolute path to codex-mem CLI binary or dist/cli.js file. Leave empty for auto-detection."
+          "description": "Optional absolute path to the retentia CLI binary (or dist/cli.js file). Leave empty for auto-detection."
         },
         "codexMem.defaultProject": {
           "type": "string",
@@ -109,7 +114,7 @@
         "codexMem.autoSyncCodexTasks": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically sync task-execution events from enabled LLM providers into codex-mem when refreshing the dashboard."
+          "description": "Automatically sync task-execution events from enabled LLM providers into Retentia when refreshing the dashboard."
         },
         "codexMem.enabledProviders": {
           "type": "array",
@@ -174,8 +179,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "package": "npm run build && vsce package --allow-missing-repository",
-    "install:local": "npm run uninstall:local || true && npm run package && code --install-extension codex-mem-vscode-$npm_package_version.vsix --force",
-    "uninstall:local": "code --uninstall-extension local.codex-mem-vscode"
+    "install:local": "npm run uninstall:local || true && npm run package && code --install-extension retentia-vscode-$npm_package_version.vsix --force",
+    "uninstall:local": "code --uninstall-extension local.retentia-vscode || code --uninstall-extension local.codex-mem-vscode || true"
   },
   "devDependencies": {
     "@vscode/vsce": "^3.6.0",

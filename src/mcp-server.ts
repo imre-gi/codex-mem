@@ -24,6 +24,7 @@ const OBSERVATION_TYPES: ObservationType[] = [
 ];
 
 const ENTRY_KINDS: EntryKind[] = ["observation", "summary"];
+const MCP_SERVER_NAME = "retentia";
 
 export interface StartMcpServerOptions {
   workerUrl?: string;
@@ -45,7 +46,7 @@ export async function startMcpServer(
 
   const server = new Server(
     {
-      name: "codex-mem",
+      name: MCP_SERVER_NAME,
       version: "0.2.0"
     },
     {
@@ -329,7 +330,7 @@ async function handleToolCall(
       content: [
         {
           type: "text",
-          text: `codex-mem error: ${message}`
+          text: `${MCP_SERVER_NAME} error: ${message}`
         }
       ]
     };

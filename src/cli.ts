@@ -34,6 +34,10 @@ interface CodexMcpServerConfig {
   };
 }
 
+const APP_NAME = "retentia";
+const LEGACY_APP_NAME = "codex-mem";
+const DEFAULT_MCP_SERVER_NAME = "retentia";
+
 async function main(): Promise<void> {
   const parsed = parseArgs(process.argv.slice(2));
   const [command = "mcp"] = parsed.positional;
@@ -113,7 +117,7 @@ async function ensureEnabled(
   port: number,
   dataFile: string | undefined
 ): Promise<Record<string, unknown>> {
-  const name = getOptionalString(parsed.options.name) || "codex-mem";
+  const name = getOptionalString(parsed.options.name) || DEFAULT_MCP_SERVER_NAME;
   const runner = resolveCodexRunner();
   const addArgs = [
     "mcp",
@@ -153,7 +157,7 @@ async function ensureEnabled(
       changed: false,
       name,
       using: runner.label,
-      message: "codex-mem MCP server already configured"
+      message: `${APP_NAME} MCP server already configured`
     };
   }
 
@@ -232,7 +236,7 @@ async function handleStoreCommand(
           ok: true,
           dataFile: store.getDataFilePath(),
           worker: await manager.status(),
-          message: "codex-mem store is ready"
+          message: `${APP_NAME} store is ready`
         });
         return;
       }
@@ -501,31 +505,33 @@ function printJson(payload: unknown): void {
 
 function printHelp(): void {
   const lines = [
-    "codex-mem: persistent memory plugin for Codex via MCP + worker service",
+    `${APP_NAME}: persistent memory plugin for Codex via MCP + worker service`,
     "",
     "Usage:",
-    "  codex-mem setup [--name <mcp-name>] [--host <host>] [--port <port>] [--data-file <path>]",
-    "  codex-mem enable [--name <mcp-name>] [--host <host>] [--port <port>] [--data-file <path>]",
-    "  codex-mem mcp [--host <host>] [--port <port>] [--data-file <path>]",
-    "  codex-mem worker <start|stop|restart|status|run> [--host <host>] [--port <port>] [--data-file <path>]",
-    "  codex-mem init [--data-file <path>]",
-    "  codex-mem kpis [--data-file <path>] [--host <host>] [--port <port>]",
-    "  codex-mem add-observation --title <text> --content <text> [--type <bugfix|feature|...>]",
-    "  codex-mem add-summary --learned <text> [--request <text>] [--next-steps <text>]",
-    "  codex-mem sync-tasks [--providers codex,claude,qwen,gwen|all] [--lookback-days <n>] [--max-import <n>]",
-    "  codex-mem search [--query <text>] [--project <name>] [--kind <observation|summary>]",
-    "  codex-mem timeline [--id <number> | --query <text>] [--before <n>] [--after <n>]",
-    "  codex-mem get --ids 1,2,3",
-    "  codex-mem context [--query <text>] [--full-count <n>]",
-    "  codex-mem list-projects",
-    "  codex-mem list-entries [--project <name>] [--kind <observation|summary>] [--limit <n>] [--offset <n>]",
-    "  codex-mem execution-report [--project <name>] [--limit <n>] [--offset <n>]",
+    `  ${APP_NAME} setup [--name <mcp-name>] [--host <host>] [--port <port>] [--data-file <path>]`,
+    `  ${APP_NAME} enable [--name <mcp-name>] [--host <host>] [--port <port>] [--data-file <path>]`,
+    `  ${APP_NAME} mcp [--host <host>] [--port <port>] [--data-file <path>]`,
+    `  ${APP_NAME} worker <start|stop|restart|status|run> [--host <host>] [--port <port>] [--data-file <path>]`,
+    `  ${APP_NAME} init [--data-file <path>]`,
+    `  ${APP_NAME} kpis [--data-file <path>] [--host <host>] [--port <port>]`,
+    `  ${APP_NAME} add-observation --title <text> --content <text> [--type <bugfix|feature|...>]`,
+    `  ${APP_NAME} add-summary --learned <text> [--request <text>] [--next-steps <text>]`,
+    `  ${APP_NAME} sync-tasks [--providers codex,claude,qwen,gwen|all] [--lookback-days <n>] [--max-import <n>]`,
+    `  ${APP_NAME} search [--query <text>] [--project <name>] [--kind <observation|summary>]`,
+    `  ${APP_NAME} timeline [--id <number> | --query <text>] [--before <n>] [--after <n>]`,
+    `  ${APP_NAME} get --ids 1,2,3`,
+    `  ${APP_NAME} context [--query <text>] [--full-count <n>]`,
+    `  ${APP_NAME} list-projects`,
+    `  ${APP_NAME} list-entries [--project <name>] [--kind <observation|summary>] [--limit <n>] [--offset <n>]`,
+    `  ${APP_NAME} execution-report [--project <name>] [--limit <n>] [--offset <n>]`,
     "",
     "Global options:",
-    "  --data-file <path>   Override SQLite DB path (default: ~/.codex-mem/codex-mem.db)",
+    "  --data-file <path>   Override SQLite DB path (default: ~/.retentia/retentia.db)",
     "  --host <host>        Worker host (default: 127.0.0.1)",
     "  --port <port>        Worker port (default: 37777)",
-    "  --name <mcp-name>    MCP server name used by `enable` (default: codex-mem)"
+    `  --name <mcp-name>    MCP server name used by \`enable\` (default: ${DEFAULT_MCP_SERVER_NAME})`,
+    "",
+    `Compatibility: legacy command alias \`${LEGACY_APP_NAME}\` is still supported.`
   ];
 
   process.stdout.write(`${lines.join("\n")}\n`);
@@ -606,6 +612,6 @@ function parseCodexMcpList(json: string): CodexMcpServerConfig[] {
 
 main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`codex-mem error: ${message}\n`);
+  process.stderr.write(`${APP_NAME} error: ${message}\n`);
   process.exit(1);
 });
