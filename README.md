@@ -8,10 +8,6 @@
 
 Retentia is an open-source MCP memory and task execution intelligence layer for OpenAI Codex, Claude Code, Qwen, and Gwen. It provides persistent SQLite-backed memory, multi-agent task tracking, and a visual VS Code dashboard for execution observability.
 
-Compatibility note:
-- Primary CLI command is now `retentia`.
-- Legacy alias `codex-mem` is still supported.
-
 ![Retentia Dashboard Preview](./docs/assets/retentia-dashboard-preview.png)
 
 ## Why Retentia
@@ -65,6 +61,19 @@ In commands below, `<repo-root>` means the directory where you cloned this repos
 ```bash
 cd <repo-root>
 npm run install:vscode
+```
+
+This root command performs first-time setup end-to-end:
+
+- installs root + extension dependencies
+- builds CLI and packages the VSIX
+- installs the extension in VS Code profiles
+- enables MCP and starts the worker
+
+If VS Code CLI cannot be auto-detected, set:
+
+```bash
+CODEX_MEM_VSCODE_CLI="<path-or-command-for-code>" npm run install:vscode
 ```
 
 ### 2. Verify runtime state
@@ -828,6 +837,13 @@ For profile-specific reinstall:
 ```bash
 cd <repo-root>
 CODEX_MEM_VSCODE_PROFILE="<profile-name>" npm run reinstall:vscode
+```
+
+If `code` is not in PATH:
+
+```bash
+cd <repo-root>
+CODEX_MEM_VSCODE_CLI="<path-or-command-for-code>" npm run reinstall:vscode
 ```
 
 ### Worker startup issues

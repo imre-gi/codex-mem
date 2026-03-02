@@ -18,6 +18,7 @@
   ],
   "activationEvents": [
     "onStartupFinished",
+    "onView:codexMem.quickInput",
     "onCommand:codexMem.setup",
     "onCommand:codexMem.enableMcp",
     "onCommand:codexMem.initStore",
@@ -98,6 +99,24 @@
         "title": "Retentia: Open Memory File"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "retentiaSidebar",
+          "title": "Retentia",
+          "icon": "assets/retentia-dashboard-preview.svg"
+        }
+      ]
+    },
+    "views": {
+      "retentiaSidebar": [
+        {
+          "type": "webview",
+          "id": "codexMem.quickInput",
+          "name": "Quick Input"
+        }
+      ]
+    },
     "configuration": {
       "title": "Retentia",
       "properties": {
@@ -120,9 +139,20 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["codex", "claude", "qwen", "gwen", "all"]
+            "enum": [
+              "codex",
+              "claude",
+              "qwen",
+              "gwen",
+              "all"
+            ]
           },
-          "default": ["codex", "claude", "qwen", "gwen"],
+          "default": [
+            "codex",
+            "claude",
+            "qwen",
+            "gwen"
+          ],
           "description": "Enabled providers for task ingestion. Use 'all' to include every supported provider."
         },
         "codexMem.autoSyncLookbackDays": {
@@ -179,8 +209,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "package": "npm run build && vsce package --allow-missing-repository",
-    "install:local": "npm run uninstall:local || true && npm run package && code --install-extension retentia-vscode-$npm_package_version.vsix --force",
-    "uninstall:local": "code --uninstall-extension local.retentia-vscode || code --uninstall-extension local.codex-mem-vscode || true"
+    "install:local": "node ./scripts/local-install.mjs",
+    "uninstall:local": "node ./scripts/local-uninstall.mjs"
   },
   "devDependencies": {
     "@vscode/vsce": "^3.6.0",

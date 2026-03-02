@@ -19,6 +19,8 @@ cd <repo-root>
 npm run install:vscode
 ```
 
+This root command installs both the core Retentia runtime and this extension, then runs MCP setup.
+
 ### Clean reinstall
 
 ```bash
@@ -48,9 +50,13 @@ Open `vscode-extension` in VS Code and press `F5`.
 ```bash
 cd <repo-root>/vscode-extension
 npm install
-npm run build
-npm run package
-code --install-extension retentia-vscode-0.1.1.vsix
+npm run install:local
+```
+
+If VS Code CLI is not on PATH:
+
+```bash
+CODEX_MEM_VSCODE_CLI="<path-or-command-for-code>" npm run install:local
 ```
 
 ## Commands
@@ -72,6 +78,9 @@ code --install-extension retentia-vscode-0.1.1.vsix
 | `Retentia: Search Memory` | `codexMem.search` | Search entries and open detail payloads. |
 | `Retentia: Generate Context Pack` | `codexMem.contextPack` | Build prompt-ready context pack. |
 | `Retentia: Open Memory File` | `codexMem.openMemoryFile` | Open active SQLite file in editor. |
+
+Sidebar:
+- `Retentia` activity bar icon includes `Quick Input` for setup, worker controls, task sync, and direct observation/summary entry forms.
 
 ## Settings
 

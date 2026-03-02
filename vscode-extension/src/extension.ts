@@ -123,6 +123,7 @@ interface TaskSyncMetrics {
 
 const OUTPUT = vscode.window.createOutputChannel("Retentia");
 const DASHBOARD_VIEW_TYPE = "codexMem.statusDashboard.view";
+const QUICK_INPUT_VIEW_TYPE = "codexMem.quickInput";
 const DASHBOARD_TITLE = "Retentia Dashboard";
 const MCP_SERVER_SECTIONS = ["mcp_servers.retentia", "mcp_servers.codex-mem"];
 const CODEX_CONFIG_PATH = join(homedir(), ".codex", "config.toml");
@@ -130,11 +131,26 @@ const DEFAULT_AUTO_SYNC_LOOKBACK_DAYS = 7;
 const DEFAULT_AUTO_SYNC_MAX_IMPORT = 25;
 const DEFAULT_AUTO_SYNC_MAX_FILES = 24;
 const DEFAULT_EXECUTION_REPORT_LIMIT = 600;
+const OBSERVATION_TYPES = new Set([
+  "note",
+  "bugfix",
+  "feature",
+  "refactor",
+  "discovery",
+  "decision",
+  "change"
+]);
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(OUTPUT);
   OUTPUT.appendLine("Retentia extension activated.");
   let dashboardPanel: vscode.WebviewPanel | undefined;
+  const sidebarProvider = new QuickInputSidebarProvider();
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(QUICK_INPUT_VIEW_TYPE, sidebarProvider, {
+      webviewOptions: { retainContextWhenHidden: true }
+    })
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.setup", async () => {
@@ -142,6 +158,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ["setup"],
         "Retentia setup complete. MCP enabled and worker started."
       );
+      await sidebarProvider.refreshStatus();
     })
   );
 
@@ -154,18 +171,21 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.initStore", async () => {
       await runAndShowJson(["init"], "retentia store initialized");
+      await sidebarProvider.refreshStatus();
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.startWorker", async () => {
       await runAndShowJson(["worker", "start"], "Retentia worker started.");
+      await sidebarProvider.refreshStatus();
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.stopWorker", async () => {
       await runAndShowJson(["worker", "stop"], "Retentia worker stopped.");
+      await sidebarProvider.refreshStatus();
     })
   );
 
@@ -183,6 +203,7 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.window.showInformationMessage(
         `LLM task sync complete. Imported ${metrics.importedTasks} of ${metrics.detectedTasks} detected tasks.`
       );
+      await sidebarProvider.refreshStatus();
     })
   );
 
@@ -318,32 +339,19 @@ export function activate(context: vscode.ExtensionContext): void {
         ignoreFocusOut: true
       });
 
-      const args = [
-        "add-observation",
-        "--title",
-        title,
-        "--content",
-        content,
-        "--type",
-        type
-      ];
-
-      const project = getDefaultProject();
-      if (project) {
-        args.push("--project", project);
-      }
-
-      if (tags?.trim()) {
-        args.push("--tags", tags.trim());
-      }
-
-      if (files?.trim()) {
-        args.push("--files", files.trim());
-      }
-
-      const result = await runCliJson(args);
+      const result = await runCliJson(
+        buildObservationArgs({
+          title,
+          content,
+          type,
+          project: getDefaultProject(),
+          tags,
+          files
+        })
+      );
       const id = typeof result.id === "number" ? `#${result.id}` : "entry";
       vscode.window.showInformationMessage(`Saved observation ${id}.`);
+      await sidebarProvider.refreshStatus();
     })
   );
 
@@ -377,24 +385,18 @@ export function activate(context: vscode.ExtensionContext): void {
         ignoreFocusOut: true
       });
 
-      const args = ["add-summary", "--learned", learned];
-      const project = getDefaultProject();
-      if (project) {
-        args.push("--project", project);
-      }
-      if (request?.trim()) {
-        args.push("--request", request.trim());
-      }
-      if (completed?.trim()) {
-        args.push("--completed", completed.trim());
-      }
-      if (nextSteps?.trim()) {
-        args.push("--next-steps", nextSteps.trim());
-      }
-
-      const result = await runCliJson(args);
+      const result = await runCliJson(
+        buildSummaryArgs({
+          learned,
+          request,
+          completed,
+          nextSteps,
+          project: getDefaultProject()
+        })
+      );
       const id = typeof result.id === "number" ? `#${result.id}` : "entry";
       vscode.window.showInformationMessage(`Saved summary ${id}.`);
+      await sidebarProvider.refreshStatus();
     })
   );
 
@@ -499,6 +501,175 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {}
 
+class QuickInputSidebarProvider implements vscode.WebviewViewProvider {
+  private view: vscode.WebviewView | undefined;
+
+  async resolveWebviewView(webviewView: vscode.WebviewView): Promise<void> {
+    this.view = webviewView;
+    webviewView.webview.options = { enableScripts: true };
+    webviewView.webview.html = getQuickInputSidebarHtml();
+
+    webviewView.webview.onDidReceiveMessage(async (message: unknown) => {
+      await this.handleMessage(message);
+    });
+
+    await this.refreshStatus();
+  }
+
+  async refreshStatus(): Promise<void> {
+    if (!this.view) {
+      return;
+    }
+
+    try {
+      const payload = toRecord(await runCliJson(["kpis"]));
+      const worker = toRecord(payload.worker);
+      const kpis = toRecord(payload.kpis);
+      this.view.webview.postMessage({
+        command: "status",
+        payload: {
+          workerRunning: toBoolean(worker.running),
+          entriesTotal: toNumber(kpis.entriesTotal) ?? 0,
+          projectsTotal: toNumber(kpis.projectsTotal) ?? 0,
+          dataFile: toText(payload.dataFile) || toText(worker.dataFile) || "n/a",
+          workerBaseUrl: toText(worker.baseUrl) || "n/a",
+          updatedAt: new Date().toISOString()
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.view.webview.postMessage({
+        command: "error",
+        payload: {
+          message
+        }
+      });
+    }
+  }
+
+  private async handleMessage(message: unknown): Promise<void> {
+    const root = toRecord(message);
+    const command = toText(root.command);
+    if (!command) {
+      return;
+    }
+
+    const payload = toRecord(root.payload);
+
+    try {
+      if (command === "refresh-status") {
+        await this.refreshStatus();
+        return;
+      }
+
+      if (command === "open-dashboard") {
+        await vscode.commands.executeCommand("codexMem.statusDashboard");
+        return;
+      }
+
+      if (command === "open-settings") {
+        await vscode.commands.executeCommand("codexMem.openSettings");
+        return;
+      }
+
+      if (command === "setup") {
+        await runAndShowJson(
+          ["setup"],
+          "Retentia setup complete. MCP enabled and worker started."
+        );
+        await this.refreshStatus();
+        return;
+      }
+
+      if (command === "start-worker") {
+        await runAndShowJson(["worker", "start"], "Retentia worker started.");
+        await this.refreshStatus();
+        return;
+      }
+
+      if (command === "stop-worker") {
+        await runAndShowJson(["worker", "stop"], "Retentia worker stopped.");
+        await this.refreshStatus();
+        return;
+      }
+
+      if (command === "sync-tasks") {
+        const metrics = await syncTaskExecutions({ force: true });
+        vscode.window.showInformationMessage(
+          `LLM task sync complete. Imported ${metrics.importedTasks} of ${metrics.detectedTasks} detected tasks.`
+        );
+        await this.refreshStatus();
+        return;
+      }
+
+      if (command === "add-observation") {
+        await this.addObservation(payload);
+        await this.refreshStatus();
+        return;
+      }
+
+      if (command === "add-summary") {
+        await this.addSummary(payload);
+        await this.refreshStatus();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      vscode.window.showErrorMessage(message);
+      if (this.view) {
+        this.view.webview.postMessage({
+          command: "error",
+          payload: { message }
+        });
+      }
+    }
+  }
+
+  private async addObservation(payload: JsonResult): Promise<void> {
+    const title = toText(payload.title)?.trim() || "";
+    const content = toText(payload.content)?.trim() || "";
+    if (!title || !content) {
+      throw new Error("Observation title and content are required.");
+    }
+
+    const result = await runCliJson(
+      buildObservationArgs({
+        title,
+        content,
+        type: toText(payload.type),
+        project: toText(payload.project),
+        tags: toText(payload.tags),
+        files: toText(payload.files)
+      })
+    );
+
+    const id = typeof result.id === "number" ? `#${result.id}` : "entry";
+    vscode.window.showInformationMessage(`Saved observation ${id}.`);
+    this.view?.webview.postMessage({ command: "clear-observation" });
+  }
+
+  private async addSummary(payload: JsonResult): Promise<void> {
+    const learned = toText(payload.learned)?.trim() || "";
+    if (!learned) {
+      throw new Error("Summary learned field is required.");
+    }
+
+    const result = await runCliJson(
+      buildSummaryArgs({
+        learned,
+        request: toText(payload.request),
+        completed: toText(payload.completed),
+        nextSteps: toText(payload.nextSteps),
+        tags: toText(payload.tags),
+        project: toText(payload.project)
+      })
+    );
+
+    const id = typeof result.id === "number" ? `#${result.id}` : "entry";
+    vscode.window.showInformationMessage(`Saved summary ${id}.`);
+    this.view?.webview.postMessage({ command: "clear-summary" });
+  }
+}
+
 function getDefaultProject(): string | undefined {
   const explicit = vscode.workspace
     .getConfiguration("codexMem")
@@ -510,6 +681,73 @@ function getDefaultProject(): string | undefined {
   }
 
   return vscode.workspace.workspaceFolders?.[0]?.name;
+}
+
+function buildObservationArgs(input: {
+  title: string;
+  content: string;
+  type?: string;
+  project?: string;
+  tags?: string;
+  files?: string;
+}): string[] {
+  const normalizedType = (input.type || "note").trim().toLowerCase();
+  const type = OBSERVATION_TYPES.has(normalizedType) ? normalizedType : "note";
+
+  const args = [
+    "add-observation",
+    "--title",
+    input.title.trim(),
+    "--content",
+    input.content.trim(),
+    "--type",
+    type
+  ];
+
+  const project = input.project?.trim() || getDefaultProject();
+  if (project) {
+    args.push("--project", project);
+  }
+
+  if (input.tags?.trim()) {
+    args.push("--tags", input.tags.trim());
+  }
+
+  if (input.files?.trim()) {
+    args.push("--files", input.files.trim());
+  }
+
+  return args;
+}
+
+function buildSummaryArgs(input: {
+  learned: string;
+  request?: string;
+  completed?: string;
+  nextSteps?: string;
+  tags?: string;
+  project?: string;
+}): string[] {
+  const args = ["add-summary", "--learned", input.learned.trim()];
+  const project = input.project?.trim() || getDefaultProject();
+
+  if (project) {
+    args.push("--project", project);
+  }
+  if (input.request?.trim()) {
+    args.push("--request", input.request.trim());
+  }
+  if (input.completed?.trim()) {
+    args.push("--completed", input.completed.trim());
+  }
+  if (input.nextSteps?.trim()) {
+    args.push("--next-steps", input.nextSteps.trim());
+  }
+  if (input.tags?.trim()) {
+    args.push("--tags", input.tags.trim());
+  }
+
+  return args;
 }
 
 async function runAndShowJson(args: string[], successMessage: string): Promise<void> {
@@ -592,7 +830,7 @@ function resolveCli(workspaceRoot: string): CliResolution {
       const script = isAbsolute(configured)
         ? configured
         : join(workspaceRoot, configured);
-      return { command: "node", baseArgs: [script] };
+      return { command: process.execPath, baseArgs: [script] };
     }
 
     return { command: configured, baseArgs: [] };
@@ -600,12 +838,12 @@ function resolveCli(workspaceRoot: string): CliResolution {
 
   const localScript = join(workspaceRoot, "dist", "cli.js");
   if (fileExists(localScript)) {
-    return { command: "node", baseArgs: [localScript] };
+    return { command: process.execPath, baseArgs: [localScript] };
   }
 
   for (const candidate of getAutoDetectCandidates(workspaceRoot)) {
     if (fileExists(candidate)) {
-      return { command: "node", baseArgs: [candidate] };
+      return { command: process.execPath, baseArgs: [candidate] };
     }
   }
 
@@ -1059,6 +1297,311 @@ function readMcpStatus(): DashboardData["mcp"] {
   } catch {
     return fallback;
   }
+}
+
+function getQuickInputSidebarHtml(): string {
+  const nonce = String(Date.now());
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg-0: #0f141b;
+        --bg-1: #17202b;
+        --line: #2b3a4c;
+        --fg-0: #edf3fb;
+        --fg-1: #a7b8cd;
+        --accent: #2ea36c;
+        --danger: #c74f3f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 10px;
+        font-family: "Segoe UI", "IBM Plex Sans", sans-serif;
+        background: var(--bg-0);
+        color: var(--fg-0);
+      }
+
+      h2 {
+        margin: 0 0 8px;
+        font-size: 14px;
+      }
+
+      h3 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        color: var(--fg-1);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      section {
+        border: 1px solid var(--line);
+        background: linear-gradient(170deg, #17202b, #101721);
+        border-radius: 10px;
+        padding: 10px;
+        margin-bottom: 10px;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+
+      .row .k {
+        color: var(--fg-1);
+      }
+
+      .pill {
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .ok {
+        background: rgba(46, 163, 108, 0.2);
+        color: #81e0b5;
+      }
+
+      .warn {
+        background: rgba(199, 79, 63, 0.2);
+        color: #ffb4a8;
+      }
+
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+
+      button {
+        border: 1px solid var(--line);
+        background: #14202b;
+        color: var(--fg-0);
+        font-size: 12px;
+        border-radius: 8px;
+        padding: 6px 8px;
+        cursor: pointer;
+      }
+
+      button:hover {
+        border-color: #3a5370;
+      }
+
+      button.primary {
+        background: linear-gradient(180deg, #2d8f63, #236f4e);
+        border-color: #2d8f63;
+      }
+
+      input,
+      select,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        background: #0f1722;
+        color: var(--fg-0);
+        border-radius: 7px;
+        padding: 6px 7px;
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+
+      textarea {
+        min-height: 56px;
+        resize: vertical;
+      }
+
+      .note {
+        color: var(--fg-1);
+        font-size: 11px;
+      }
+
+      .error {
+        border: 1px solid rgba(199, 79, 63, 0.5);
+        background: rgba(199, 79, 63, 0.1);
+        color: #ffb4a8;
+        border-radius: 8px;
+        padding: 7px 8px;
+        font-size: 12px;
+        margin-bottom: 10px;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="error" class="error"></div>
+
+    <section>
+      <h2>Retentia Quick Input</h2>
+      <div class="row"><span class="k">Worker</span><span id="statusWorker" class="pill warn">Unknown</span></div>
+      <div class="row"><span class="k">Entries</span><span id="statusEntries">0</span></div>
+      <div class="row"><span class="k">Projects</span><span id="statusProjects">0</span></div>
+      <div class="row"><span class="k">DB</span><span id="statusDb">n/a</span></div>
+      <div class="row"><span class="k">Updated</span><span id="statusUpdated">n/a</span></div>
+      <div class="actions">
+        <button data-action="refresh-status">Refresh</button>
+        <button data-action="open-dashboard">Dashboard</button>
+        <button class="primary" data-action="setup">Setup</button>
+        <button data-action="sync-tasks">Sync Tasks</button>
+        <button data-action="start-worker">Start Worker</button>
+        <button data-action="stop-worker">Stop Worker</button>
+        <button data-action="open-settings">Settings</button>
+      </div>
+      <div class="note" style="margin-top:8px;">Use Setup after first install.</div>
+    </section>
+
+    <section>
+      <h3>Add Observation</h3>
+      <input id="obsProject" type="text" placeholder="Project (optional)" />
+      <select id="obsType">
+        <option value="note">note</option>
+        <option value="bugfix">bugfix</option>
+        <option value="feature">feature</option>
+        <option value="refactor">refactor</option>
+        <option value="discovery">discovery</option>
+        <option value="decision">decision</option>
+        <option value="change">change</option>
+      </select>
+      <input id="obsTitle" type="text" placeholder="Title (required)" />
+      <textarea id="obsContent" placeholder="Content (required)"></textarea>
+      <input id="obsTags" type="text" placeholder="Tags (comma-separated)" />
+      <input id="obsFiles" type="text" placeholder="Files (comma-separated)" />
+      <button class="primary" id="submitObservation">Save Observation</button>
+    </section>
+
+    <section>
+      <h3>Add Summary</h3>
+      <input id="sumProject" type="text" placeholder="Project (optional)" />
+      <textarea id="sumLearned" placeholder="Learned (required)"></textarea>
+      <textarea id="sumRequest" placeholder="Request (optional)"></textarea>
+      <textarea id="sumCompleted" placeholder="Completed (optional)"></textarea>
+      <textarea id="sumNextSteps" placeholder="Next steps (optional)"></textarea>
+      <input id="sumTags" type="text" placeholder="Tags (comma-separated)" />
+      <button class="primary" id="submitSummary">Save Summary</button>
+      <div class="note" style="margin-top:8px;">
+        Need CLI path settings? Use command palette: Retentia: Open Settings.
+      </div>
+    </section>
+
+    <script nonce="${nonce}">
+      const vscode = acquireVsCodeApi();
+
+      const statusWorker = document.getElementById("statusWorker");
+      const statusEntries = document.getElementById("statusEntries");
+      const statusProjects = document.getElementById("statusProjects");
+      const statusDb = document.getElementById("statusDb");
+      const statusUpdated = document.getElementById("statusUpdated");
+      const errorNode = document.getElementById("error");
+
+      function post(command, payload = {}) {
+        vscode.postMessage({ command, payload });
+      }
+
+      function showError(message) {
+        if (!message) {
+          errorNode.style.display = "none";
+          errorNode.textContent = "";
+          return;
+        }
+        errorNode.style.display = "block";
+        errorNode.textContent = String(message);
+      }
+
+      function formatDate(value) {
+        if (!value) return "n/a";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return String(value);
+        return date.toLocaleString();
+      }
+
+      for (const button of document.querySelectorAll("button[data-action]")) {
+        button.addEventListener("click", () => {
+          showError("");
+          post(button.getAttribute("data-action") || "");
+        });
+      }
+
+      document.getElementById("submitObservation").addEventListener("click", () => {
+        showError("");
+        post("add-observation", {
+          project: document.getElementById("obsProject").value,
+          type: document.getElementById("obsType").value,
+          title: document.getElementById("obsTitle").value,
+          content: document.getElementById("obsContent").value,
+          tags: document.getElementById("obsTags").value,
+          files: document.getElementById("obsFiles").value
+        });
+      });
+
+      document.getElementById("submitSummary").addEventListener("click", () => {
+        showError("");
+        post("add-summary", {
+          project: document.getElementById("sumProject").value,
+          learned: document.getElementById("sumLearned").value,
+          request: document.getElementById("sumRequest").value,
+          completed: document.getElementById("sumCompleted").value,
+          nextSteps: document.getElementById("sumNextSteps").value,
+          tags: document.getElementById("sumTags").value
+        });
+      });
+
+      window.addEventListener("message", (event) => {
+        const message = event.data || {};
+        if (message.command === "status") {
+          const payload = message.payload || {};
+          const running = payload.workerRunning === true;
+          statusWorker.textContent = running ? "Running" : "Stopped";
+          statusWorker.className = running ? "pill ok" : "pill warn";
+          statusEntries.textContent = String(payload.entriesTotal ?? 0);
+          statusProjects.textContent = String(payload.projectsTotal ?? 0);
+          statusDb.textContent = String(payload.dataFile ?? "n/a");
+          statusUpdated.textContent = formatDate(payload.updatedAt);
+          showError("");
+          return;
+        }
+
+        if (message.command === "clear-observation") {
+          document.getElementById("obsTitle").value = "";
+          document.getElementById("obsContent").value = "";
+          document.getElementById("obsTags").value = "";
+          document.getElementById("obsFiles").value = "";
+          return;
+        }
+
+        if (message.command === "clear-summary") {
+          document.getElementById("sumLearned").value = "";
+          document.getElementById("sumRequest").value = "";
+          document.getElementById("sumCompleted").value = "";
+          document.getElementById("sumNextSteps").value = "";
+          document.getElementById("sumTags").value = "";
+          return;
+        }
+
+        if (message.command === "error") {
+          showError((message.payload && message.payload.message) || "Unknown error");
+        }
+      });
+
+      post("refresh-status");
+    </script>
+  </body>
+</html>`;
 }
 
 function getDashboardHtml(data: DashboardData, loading: boolean): string {

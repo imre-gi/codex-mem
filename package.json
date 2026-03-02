@@ -1,6 +1,7 @@
 {
   "name": "retentia",
   "version": "0.2.0",
+  "displayName": "Retentia",
   "description": "Persistent project memory MCP plugin for OpenAI Codex, Claude Code, and other major LLMs.",
   "type": "module",
   "main": "dist/index.js",
@@ -20,10 +21,8 @@
     "enable": "npm run build && node dist/cli.js enable",
     "vscode:build": "npm --prefix vscode-extension run build",
     "vscode:package": "npm --prefix vscode-extension run package",
-    "vscode:install": "npm --prefix vscode-extension run install:local",
-    "reset:vscode": "bash scripts/reset-vscode.sh",
-    "install:vscode": "bash scripts/install-vscode.sh",
-    "reinstall:vscode": "npm run reset:vscode && npm run install:vscode",
+    "install:vscode": "node scripts/vscode-install.mjs install",
+    "reinstall:vscode": "node scripts/vscode-install.mjs reinstall",
     "dev": "tsx src/cli.ts mcp",
     "start": "node dist/cli.js mcp"
   },
