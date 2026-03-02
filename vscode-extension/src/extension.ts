@@ -18,8 +18,42 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(OUTPUT);
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("codexMem.setup", async () => {
+      await runAndShowJson(
+        ["setup"],
+        "Codex Mem setup complete. MCP enabled and worker started."
+      );
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codexMem.enableMcp", async () => {
+      await runAndShowJson(["enable"], "Codex Mem MCP registration completed.");
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.initStore", async () => {
       await runAndShowJson(["init"], "codex-mem store initialized");
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codexMem.startWorker", async () => {
+      await runAndShowJson(["worker", "start"], "Codex Mem worker started.");
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codexMem.stopWorker", async () => {
+      await runAndShowJson(["worker", "stop"], "Codex Mem worker stopped.");
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codexMem.workerStatus", async () => {
+      const status = await runCliJson(["worker", "status"]);
+      await openJsonDocument(status, "codex-mem-worker-status.json");
     })
   );
 
@@ -309,9 +343,12 @@ async function runCliRaw(args: string[]): Promise<string> {
     });
 
     child.on("error", (error) => {
-      const message =
-        `Failed to start codex-mem CLI. ${error.message}\n` +
-        `Set codexMem.cliPath or build codex-mem dist/cli.js.`;
+      const message = [
+        `Failed to start codex-mem CLI: ${error.message}`,
+        `Set 'codexMem.cliPath' in VS Code settings, or ensure one of these exists:`,
+        ...getAutoDetectCandidates(cwd).map((candidate) => `- ${candidate}`),
+        `Or make sure 'codex-mem' is on PATH.`
+      ].join("\n");
       OUTPUT.appendLine(message);
       reject(new Error(message));
     });
@@ -352,7 +389,24 @@ function resolveCli(workspaceRoot: string): CliResolution {
     return { command: "node", baseArgs: [localScript] };
   }
 
+  for (const candidate of getAutoDetectCandidates(workspaceRoot)) {
+    if (fileExists(candidate)) {
+      return { command: "node", baseArgs: [candidate] };
+    }
+  }
+
   return { command: "codex-mem", baseArgs: [] };
+}
+
+function getAutoDetectCandidates(workspaceRoot: string): string[] {
+  const candidates = [
+    join(workspaceRoot, "..", "dist", "cli.js"),
+    join(workspaceRoot, "codex-mem", "dist", "cli.js"),
+    join(workspaceRoot, "..", "codex-mem", "dist", "cli.js"),
+    join(workspaceRoot, "..", "..", "codex-mem", "dist", "cli.js")
+  ];
+
+  return [...new Set(candidates)];
 }
 
 function fileExists(path: string): boolean {

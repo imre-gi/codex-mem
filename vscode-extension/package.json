@@ -12,7 +12,12 @@
     "Other"
   ],
   "activationEvents": [
+    "onCommand:codexMem.setup",
+    "onCommand:codexMem.enableMcp",
     "onCommand:codexMem.initStore",
+    "onCommand:codexMem.startWorker",
+    "onCommand:codexMem.stopWorker",
+    "onCommand:codexMem.workerStatus",
     "onCommand:codexMem.addObservation",
     "onCommand:codexMem.addSummary",
     "onCommand:codexMem.search",
@@ -23,8 +28,28 @@
   "contributes": {
     "commands": [
       {
+        "command": "codexMem.setup",
+        "title": "Codex Mem: Setup (Enable + Start Worker)"
+      },
+      {
+        "command": "codexMem.enableMcp",
+        "title": "Codex Mem: Enable MCP"
+      },
+      {
         "command": "codexMem.initStore",
         "title": "Codex Mem: Initialize Store"
+      },
+      {
+        "command": "codexMem.startWorker",
+        "title": "Codex Mem: Start Worker"
+      },
+      {
+        "command": "codexMem.stopWorker",
+        "title": "Codex Mem: Stop Worker"
+      },
+      {
+        "command": "codexMem.workerStatus",
+        "title": "Codex Mem: Worker Status"
       },
       {
         "command": "codexMem.addObservation",

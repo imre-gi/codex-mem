@@ -78,20 +78,63 @@ codex-mem/
 ```bash
 cd /home/imre/Development/codex-mem
 npm install
-npm run build
-npm test
+npm run setup
 ```
+
+`npm run setup` does:
+
+1. build (`npm run build`)
+2. one-time MCP registration (`node dist/cli.js setup`)
+3. worker startup
+
+## Getting Started (New Machine)
+
+If this is a fresh install and you want the fastest path to working MCP memory:
+
+1. Install Node.js 20+
+2. Clone this repo
+3. Run:
+
+```bash
+cd /home/imre/Development/codex-mem
+npm install
+npm run setup
+```
+
+4. Verify:
+
+```bash
+codex mcp get codex-mem
+node dist/cli.js worker status
+```
+
+5. Run Codex normally:
+
+```bash
+codex
+```
+
+Notes:
+
+- If `codex` is not installed globally, `setup` automatically tries `npx --yes @openai/codex`.
+- If `npx` path is used, the first run can be slower because it resolves the package first.
 
 ## Quick Start
 
-### 0. One-time enable (recommended)
+### 0. One-time setup (recommended)
+
+```bash
+node dist/cli.js setup
+```
+
+This registers `codex-mem` in Codex MCP settings and starts the worker.  
+After that, just run `codex` normally.
+
+### 0b. Enable only
 
 ```bash
 node dist/cli.js enable
 ```
-
-This registers `codex-mem` in Codex MCP settings automatically.  
-After that, just run `codex` normally.
 
 ### 1. Start worker
 
@@ -141,7 +184,7 @@ The `mcp` command auto-starts the worker backend if needed.
 Equivalent single-command setup from this repo:
 
 ```bash
-node dist/cli.js enable
+node dist/cli.js setup
 ```
 
 Verify:
@@ -220,6 +263,7 @@ Worker PID file:
 
 ### Commands
 
+- `setup`
 - `enable`
 - `mcp`
 - `worker start|stop|restart|status|run`
@@ -232,6 +276,21 @@ Worker PID file:
 - `context`
 - `list-projects`
 - `help`
+
+### `setup`
+
+Onboarding command that enables MCP and starts worker:
+
+```bash
+node dist/cli.js setup
+```
+
+Optional:
+
+- `--name <mcp-name>` (default: `codex-mem`)
+- `--host <host>`
+- `--port <port>`
+- `--data-file <path>`
 
 ### `init`
 
@@ -408,6 +467,8 @@ Single table `entries` with `kind` discriminator:
 
 Local extension package: `vscode-extension/`.
 
+### Option A: Development Host
+
 Build:
 
 ```bash
@@ -421,6 +482,11 @@ Run extension dev host:
 1. Open `vscode-extension` in VS Code
 2. Press `F5`
 3. In the Extension Development Host window use commands:
+   - `Codex Mem: Setup (Enable + Start Worker)`
+   - `Codex Mem: Enable MCP`
+   - `Codex Mem: Start Worker`
+   - `Codex Mem: Stop Worker`
+   - `Codex Mem: Worker Status`
    - `Codex Mem: Initialize Store`
    - `Codex Mem: Add Observation`
    - `Codex Mem: Add Summary`
@@ -428,10 +494,32 @@ Run extension dev host:
    - `Codex Mem: Generate Context Pack`
    - `Codex Mem: Open Memory File`
 
+### Option B: Install As `.vsix`
+
+```bash
+cd /home/imre/Development/codex-mem/vscode-extension
+npm install
+npm run build
+npx @vscode/vsce package
+code --install-extension codex-mem-vscode-0.1.0.vsix
+```
+
+After installing, run command palette action:
+
+- `Codex Mem: Setup (Enable + Start Worker)`
+
 Extension settings:
 
 - `codexMem.cliPath`
 - `codexMem.defaultProject`
+
+CLI auto-detection checks these paths in order (before falling back to `codex-mem` on PATH):
+
+- `<workspace>/dist/cli.js`
+- `<workspace>/../dist/cli.js`
+- `<workspace>/codex-mem/dist/cli.js`
+- `<workspace>/../codex-mem/dist/cli.js`
+- `<workspace>/../../codex-mem/dist/cli.js`
 
 ## Troubleshooting
 
@@ -469,6 +557,21 @@ Set `codexMem.cliPath` to:
 
 - `/home/imre/Development/codex-mem/dist/cli.js` (script path), or
 - `codex-mem` (if linked/global)
+
+### VS Code extension commands run, but Codex still has no memory tools
+
+Check MCP registration and restart Codex:
+
+```bash
+codex mcp get codex-mem
+codex mcp list
+```
+
+If needed, rerun:
+
+```bash
+node /home/imre/Development/codex-mem/dist/cli.js setup
+```
 
 ### Node version errors
 

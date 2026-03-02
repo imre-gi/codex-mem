@@ -48,8 +48,14 @@ async function main(): Promise<void> {
   });
 
   switch (command) {
+    case "setup": {
+      await handleSetupCommand(parsed, scriptPath, host, port, dataFile, manager);
+      return;
+    }
+
     case "enable": {
-      await handleEnableCommand(parsed, scriptPath, host, port, dataFile);
+      const result = await ensureEnabled(parsed, scriptPath, host, port, dataFile);
+      printJson(result);
       return;
     }
 
@@ -79,13 +85,32 @@ async function main(): Promise<void> {
   }
 }
 
-async function handleEnableCommand(
+async function handleSetupCommand(
+  parsed: ParsedArgs,
+  scriptPath: string,
+  host: string,
+  port: number,
+  dataFile: string | undefined,
+  manager: WorkerManager
+): Promise<void> {
+  const enableResult = await ensureEnabled(parsed, scriptPath, host, port, dataFile);
+  const workerStatus = await manager.start();
+  printJson({
+    ok: true,
+    setup: true,
+    enable: enableResult,
+    worker: workerStatus,
+    message: "Setup complete. You can now run `codex` directly."
+  });
+}
+
+async function ensureEnabled(
   parsed: ParsedArgs,
   scriptPath: string,
   host: string,
   port: number,
   dataFile: string | undefined
-): Promise<void> {
+): Promise<Record<string, unknown>> {
   const name = getOptionalString(parsed.options.name) || "codex-mem";
   const runner = resolveCodexRunner();
   const addArgs = [
@@ -105,22 +130,29 @@ async function handleEnableCommand(
 
   const listResult = runCodexCommand(runner, ["mcp", "list", "--json"]);
   const configured = parseCodexMcpList(listResult.stdout).find((item) => item.name === name);
-  const targetArgs = [scriptPath, "mcp", "--host", host, "--port", String(port), ...(dataFile ? ["--data-file", dataFile] : [])];
+  const targetArgs = [
+    scriptPath,
+    "mcp",
+    "--host",
+    host,
+    "--port",
+    String(port),
+    ...(dataFile ? ["--data-file", dataFile] : [])
+  ];
   const alreadyConfigured =
     configured?.transport?.type === "stdio" &&
     configured.transport.command === "node" &&
     JSON.stringify(configured.transport.args || []) === JSON.stringify(targetArgs);
 
   if (alreadyConfigured) {
-    printJson({
+    return {
       ok: true,
       enabled: true,
       changed: false,
       name,
       using: runner.label,
       message: "codex-mem MCP server already configured"
-    });
-    return;
+    };
   }
 
   if (configured) {
@@ -128,14 +160,14 @@ async function handleEnableCommand(
   }
 
   runCodexCommand(runner, addArgs);
-  printJson({
+  return {
     ok: true,
     enabled: true,
     changed: true,
     name,
     using: runner.label,
     command: [runner.command, ...runner.prefixArgs, ...addArgs].join(" ")
-  });
+  };
 }
 
 async function handleWorkerCommand(
@@ -383,6 +415,7 @@ function printHelp(): void {
     "codex-mem: persistent memory plugin for Codex via MCP + worker service",
     "",
     "Usage:",
+    "  codex-mem setup [--name <mcp-name>] [--host <host>] [--port <port>] [--data-file <path>]",
     "  codex-mem enable [--name <mcp-name>] [--host <host>] [--port <port>] [--data-file <path>]",
     "  codex-mem mcp [--host <host>] [--port <port>] [--data-file <path>]",
     "  codex-mem worker <start|stop|restart|status|run> [--host <host>] [--port <port>] [--data-file <path>]",
