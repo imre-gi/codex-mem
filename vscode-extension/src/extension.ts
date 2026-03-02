@@ -1,4 +1,12 @@
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  type Dirent
+} from "node:fs";
 import { join, isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
@@ -46,8 +54,31 @@ interface DashboardData {
     latestEntryAt?: string;
     oldestEntryAt?: string;
   };
+  ingestion: {
+    autoSyncEnabled: boolean;
+    detectedTasks: number;
+    importedTasks: number;
+    skippedTasks: number;
+    failedTasks: number;
+    newestTaskAt?: string;
+  };
   recentTasks: DashboardTask[];
   error?: string;
+}
+
+interface CodexTaskEvent {
+  turnId: string;
+  timestamp: string;
+  lastAgentMessage: string;
+}
+
+interface CodexTaskSyncMetrics {
+  autoSyncEnabled: boolean;
+  detectedTasks: number;
+  importedTasks: number;
+  skippedTasks: number;
+  failedTasks: number;
+  newestTaskAt?: string;
 }
 
 const OUTPUT = vscode.window.createOutputChannel("Codex Mem");
@@ -55,10 +86,18 @@ const DASHBOARD_VIEW_TYPE = "codexMem.statusDashboard.view";
 const DASHBOARD_TITLE = "Codex Mem Dashboard";
 const MCP_SERVER_SECTION = "mcp_servers.codex-mem";
 const CODEX_CONFIG_PATH = join(homedir(), ".codex", "config.toml");
+const CODEX_SESSIONS_PATH = join(homedir(), ".codex", "sessions");
+const IMPORTED_TURN_IDS_STATE_KEY = "codexMem.importedTurnIds.v1";
+const MAX_TRACKED_TURN_IDS = 5000;
+const DEFAULT_AUTO_SYNC_LOOKBACK_DAYS = 7;
+const DEFAULT_AUTO_SYNC_MAX_IMPORT = 25;
+
+let extensionState: vscode.Memento | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(OUTPUT);
   OUTPUT.appendLine("Codex Mem extension activated.");
+  extensionState = context.globalState;
   let dashboardPanel: vscode.WebviewPanel | undefined;
 
   context.subscriptions.push(
@@ -98,6 +137,16 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("codexMem.workerStatus", async () => {
       const status = await runCliJson(["worker", "status"]);
       await openJsonDocument(status, "codex-mem-worker-status.json");
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codexMem.syncCodexTasks", async () => {
+      const metrics = await syncCodexTasksIntoMemory({ force: true });
+      OUTPUT.appendLine(`Codex task sync metrics: ${JSON.stringify(metrics)}`);
+      vscode.window.showInformationMessage(
+        `Codex task sync complete. Imported ${metrics.importedTasks} of ${metrics.detectedTasks} detected tasks.`
+      );
     })
   );
 
@@ -150,6 +199,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (cmd === "stop-worker") {
             await runAndShowJson(["worker", "stop"], "Codex Mem worker stopped.");
+            await renderDashboardPanel(dashboardPanel);
+            return;
+          }
+
+          if (cmd === "sync-tasks") {
+            const metrics = await syncCodexTasksIntoMemory({ force: true });
+            OUTPUT.appendLine(`Dashboard sync metrics: ${JSON.stringify(metrics)}`);
+            vscode.window.showInformationMessage(
+              `Codex task sync complete. Imported ${metrics.importedTasks} task(s).`
+            );
             await renderDashboardPanel(dashboardPanel);
             return;
           }
@@ -562,6 +621,7 @@ async function renderDashboardPanel(panel: vscode.WebviewPanel): Promise<void> {
 }
 
 async function collectDashboardData(): Promise<DashboardData> {
+  const ingestion = await syncCodexTasksIntoMemory({ force: false });
   const [statusPayload, recentPayload] = await Promise.all([
     runCliJson(["kpis"]),
     runCliJson(["search", "--limit", "8"])
@@ -605,6 +665,7 @@ async function collectDashboardData(): Promise<DashboardData> {
       latestEntryAt: toText(kpis.latestEntryAt),
       oldestEntryAt: toText(kpis.oldestEntryAt)
     },
+    ingestion,
     recentTasks
   };
 }
@@ -630,9 +691,303 @@ function createEmptyDashboardData(error?: string): DashboardData {
       summariesTotal: 0,
       projectsTotal: 0
     },
+    ingestion: {
+      autoSyncEnabled: true,
+      detectedTasks: 0,
+      importedTasks: 0,
+      skippedTasks: 0,
+      failedTasks: 0
+    },
     recentTasks: [],
     error
   };
+}
+
+async function syncCodexTasksIntoMemory(options: {
+  force: boolean;
+}): Promise<CodexTaskSyncMetrics> {
+  const autoSyncEnabled = isAutoSyncEnabled();
+  const detectedEvents = readRecentCodexTaskEvents(
+    Math.max(getAutoSyncMaxImport() * 8, 80)
+  );
+
+  const metrics: CodexTaskSyncMetrics = {
+    autoSyncEnabled,
+    detectedTasks: detectedEvents.length,
+    importedTasks: 0,
+    skippedTasks: 0,
+    failedTasks: 0,
+    newestTaskAt: detectedEvents[0]?.timestamp
+  };
+
+  if (!options.force && !autoSyncEnabled) {
+    return metrics;
+  }
+
+  if (detectedEvents.length === 0) {
+    return metrics;
+  }
+
+  const trackedTurnIds = getTrackedTurnIds();
+  const maxImport = getAutoSyncMaxImport();
+  const eventsInChronologicalOrder = [...detectedEvents].reverse();
+  const defaultProject = getDefaultProject();
+
+  for (const event of eventsInChronologicalOrder) {
+    if (trackedTurnIds.has(event.turnId)) {
+      metrics.skippedTasks += 1;
+      continue;
+    }
+
+    if (metrics.importedTasks >= maxImport) {
+      metrics.skippedTasks += 1;
+      continue;
+    }
+
+    const args = [
+      "add-observation",
+      "--title",
+      buildTaskObservationTitle(event),
+      "--content",
+      buildTaskObservationContent(event),
+      "--type",
+      "note",
+      "--tags",
+      "codex,task-complete"
+    ];
+
+    if (defaultProject) {
+      args.push("--project", defaultProject);
+    }
+
+    try {
+      await runCliJson(args);
+      trackedTurnIds.add(event.turnId);
+      metrics.importedTasks += 1;
+    } catch (error) {
+      metrics.failedTasks += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      OUTPUT.appendLine(`Task sync failed for ${event.turnId}: ${message}`);
+    }
+  }
+
+  await setTrackedTurnIds(trackedTurnIds);
+  return metrics;
+}
+
+function isAutoSyncEnabled(): boolean {
+  return vscode.workspace
+    .getConfiguration("codexMem")
+    .get<boolean>("autoSyncCodexTasks", true);
+}
+
+function getAutoSyncMaxImport(): number {
+  const configured = vscode.workspace
+    .getConfiguration("codexMem")
+    .get<number>("autoSyncMaxImport", DEFAULT_AUTO_SYNC_MAX_IMPORT);
+  if (typeof configured !== "number" || !Number.isFinite(configured)) {
+    return DEFAULT_AUTO_SYNC_MAX_IMPORT;
+  }
+  return Math.min(Math.max(Math.floor(configured), 1), 200);
+}
+
+function getAutoSyncLookbackDays(): number {
+  const configured = vscode.workspace
+    .getConfiguration("codexMem")
+    .get<number>("autoSyncLookbackDays", DEFAULT_AUTO_SYNC_LOOKBACK_DAYS);
+  if (typeof configured !== "number" || !Number.isFinite(configured)) {
+    return DEFAULT_AUTO_SYNC_LOOKBACK_DAYS;
+  }
+  return Math.min(Math.max(Math.floor(configured), 1), 30);
+}
+
+function getCodexSessionsPath(): string {
+  const configured = vscode.workspace
+    .getConfiguration("codexMem")
+    .get<string>("codexSessionsPath", "")
+    .trim();
+  if (configured) {
+    return configured;
+  }
+  return CODEX_SESSIONS_PATH;
+}
+
+function readRecentCodexTaskEvents(limit: number): CodexTaskEvent[] {
+  const maxFiles = 20;
+  const lookbackDays = getAutoSyncLookbackDays();
+  const files = listRecentSessionFiles(getCodexSessionsPath(), maxFiles, lookbackDays);
+  const dedupedByTurnId = new Map<string, CodexTaskEvent>();
+
+  for (const filePath of files) {
+    for (const event of parseTaskEventsFromFile(filePath)) {
+      const existing = dedupedByTurnId.get(event.turnId);
+      if (!existing || event.timestamp > existing.timestamp) {
+        dedupedByTurnId.set(event.turnId, event);
+      }
+    }
+  }
+
+  return Array.from(dedupedByTurnId.values())
+    .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+    .slice(0, Math.max(limit, 0));
+}
+
+function listRecentSessionFiles(
+  sessionsRoot: string,
+  maxFiles: number,
+  lookbackDays: number
+): string[] {
+  if (!existsSync(sessionsRoot)) {
+    return [];
+  }
+
+  const cutoffMs = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
+  const pending = [sessionsRoot];
+  const files: Array<{ path: string; mtimeMs: number }> = [];
+
+  while (pending.length > 0) {
+    const currentDir = pending.pop();
+    if (!currentDir) {
+      break;
+    }
+
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(currentDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const absolutePath = join(currentDir, entry.name);
+
+      if (entry.isDirectory()) {
+        pending.push(absolutePath);
+        continue;
+      }
+
+      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
+        continue;
+      }
+
+      try {
+        const stats = statSync(absolutePath);
+        if (stats.mtimeMs >= cutoffMs) {
+          files.push({ path: absolutePath, mtimeMs: stats.mtimeMs });
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return files
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .slice(0, maxFiles)
+    .map((file) => file.path);
+}
+
+function parseTaskEventsFromFile(filePath: string): CodexTaskEvent[] {
+  let raw = "";
+  try {
+    raw = readFileSync(filePath, "utf8");
+  } catch {
+    return [];
+  }
+
+  const events: CodexTaskEvent[] = [];
+  const lines = raw.split(/\r?\n/);
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+
+    const root = toRecord(parsed);
+    if (toText(root.type) !== "event_msg") {
+      continue;
+    }
+
+    const payload = toRecord(root.payload);
+    if (toText(payload.type) !== "task_complete") {
+      continue;
+    }
+
+    const turnId = toText(payload.turn_id);
+    const timestamp = toText(root.timestamp);
+    if (!turnId || !timestamp) {
+      continue;
+    }
+
+    events.push({
+      turnId,
+      timestamp,
+      lastAgentMessage: toText(payload.last_agent_message) || ""
+    });
+  }
+
+  return events;
+}
+
+function getTrackedTurnIds(): Set<string> {
+  const tracked =
+    extensionState?.get<string[]>(IMPORTED_TURN_IDS_STATE_KEY, []) || [];
+  return new Set(tracked);
+}
+
+async function setTrackedTurnIds(turnIds: Set<string>): Promise<void> {
+  if (!extensionState) {
+    return;
+  }
+
+  const allTurnIds = Array.from(turnIds);
+  const trimmed =
+    allTurnIds.length > MAX_TRACKED_TURN_IDS
+      ? allTurnIds.slice(allTurnIds.length - MAX_TRACKED_TURN_IDS)
+      : allTurnIds;
+  await extensionState.update(IMPORTED_TURN_IDS_STATE_KEY, trimmed);
+}
+
+function buildTaskObservationTitle(event: CodexTaskEvent): string {
+  const firstLine = event.lastAgentMessage
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => Boolean(line));
+  const fallback = `Codex task completed (${event.turnId.slice(0, 8)})`;
+  return truncateText((firstLine || fallback).replace(/\s+/g, " "), 120);
+}
+
+function buildTaskObservationContent(event: CodexTaskEvent): string {
+  const summary = truncateText(
+    event.lastAgentMessage.replace(/\s+/g, " ").trim(),
+    1600
+  );
+  const lines = [
+    "Source: codex session task completion event.",
+    `Turn ID: ${event.turnId}`,
+    `Timestamp: ${event.timestamp}`
+  ];
+
+  if (summary) {
+    lines.push(`Last agent message: ${summary}`);
+  }
+
+  return lines.join("\n");
+}
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength - 3)}...`;
 }
 
 function readMcpStatus(): DashboardData["mcp"] {
@@ -967,6 +1322,7 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
         <div class="actions">
           <button data-cmd="refresh">Refresh</button>
           <button data-cmd="setup">Setup</button>
+          <button data-cmd="sync-tasks">Sync Codex Tasks</button>
           <button data-cmd="start-worker">Start Worker</button>
           <button data-cmd="stop-worker">Stop Worker</button>
         </div>
@@ -994,6 +1350,14 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
           <div class="label">Projects</div>
           <div class="value">${data.kpis.projectsTotal}</div>
         </article>
+        <article class="card">
+          <div class="label">Synced (Refresh)</div>
+          <div class="value">${data.ingestion.importedTasks}</div>
+        </article>
+        <article class="card">
+          <div class="label">Detected (Recent)</div>
+          <div class="value">${data.ingestion.detectedTasks}</div>
+        </article>
       </section>
 
       <section class="panels">
@@ -1012,6 +1376,11 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
             <div class="k">Summaries</div><div>${data.kpis.summariesTotal}</div>
             <div class="k">Latest Entry</div><div>${escapeHtml(formatIso(data.kpis.latestEntryAt))}</div>
             <div class="k">Oldest Entry</div><div>${escapeHtml(formatIso(data.kpis.oldestEntryAt))}</div>
+            <div class="k">Auto Sync</div><div>${data.ingestion.autoSyncEnabled ? "Enabled" : "Disabled"}</div>
+            <div class="k">Sync Imported</div><div>${data.ingestion.importedTasks}</div>
+            <div class="k">Sync Skipped</div><div>${data.ingestion.skippedTasks}</div>
+            <div class="k">Sync Errors</div><div>${data.ingestion.failedTasks}</div>
+            <div class="k">Newest Codex Task</div><div>${escapeHtml(formatIso(data.ingestion.newestTaskAt))}</div>
           </div>
         </article>
         <article class="panel">

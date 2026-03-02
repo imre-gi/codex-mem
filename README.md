@@ -535,6 +535,7 @@ Run extension dev host:
    - `Codex Mem: Start Worker`
    - `Codex Mem: Stop Worker`
    - `Codex Mem: Worker Status`
+   - `Codex Mem: Sync Codex Tasks`
    - `Codex Mem: Status Dashboard`
    - `Codex Mem: Open Settings`
    - `Codex Mem: Initialize Store`
@@ -569,12 +570,17 @@ Dashboard includes:
 - MCP config status
 - KPI cards (entries, observations, summaries, projects)
 - recent memory task executions
-- action buttons (`Refresh`, `Setup`, `Start Worker`, `Stop Worker`)
+- Codex task ingestion metrics (detected/imported/skipped/errors)
+- action buttons (`Refresh`, `Setup`, `Sync Codex Tasks`, `Start Worker`, `Stop Worker`)
 
 Extension settings:
 
 - `codexMem.cliPath`
 - `codexMem.defaultProject`
+- `codexMem.autoSyncCodexTasks`
+- `codexMem.autoSyncLookbackDays`
+- `codexMem.autoSyncMaxImport`
+- `codexMem.codexSessionsPath`
 
 CLI auto-detection checks these paths in order (before falling back to `codex-mem` on PATH):
 
@@ -657,6 +663,18 @@ If needed, rerun:
 ```bash
 node dist/cli.js setup
 ```
+
+### Dashboard shows zero tasks even when Codex tasks run
+
+What this means:
+
+- Codex tasks completed, but no `mem_add_*` writes were made yet.
+
+How this is handled now:
+
+- The VS Code extension can auto-import recent Codex `task_complete` session events into codex-mem observations.
+- You can trigger this immediately with `Codex Mem: Sync Codex Tasks`.
+- Dashboard runtime panel shows ingestion counters so you can verify import activity.
 
 ### Node version errors
 

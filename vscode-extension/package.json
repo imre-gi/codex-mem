@@ -19,6 +19,7 @@
     "onCommand:codexMem.startWorker",
     "onCommand:codexMem.stopWorker",
     "onCommand:codexMem.workerStatus",
+    "onCommand:codexMem.syncCodexTasks",
     "onCommand:codexMem.statusDashboard",
     "onCommand:codexMem.openSettings",
     "onCommand:codexMem.addObservation",
@@ -53,6 +54,10 @@
       {
         "command": "codexMem.workerStatus",
         "title": "Codex Mem: Worker Status"
+      },
+      {
+        "command": "codexMem.syncCodexTasks",
+        "title": "Codex Mem: Sync Codex Tasks"
       },
       {
         "command": "codexMem.statusDashboard",
@@ -95,6 +100,30 @@
           "type": "string",
           "default": "",
           "description": "Optional default project name to use when adding entries from VS Code."
+        },
+        "codexMem.autoSyncCodexTasks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically import recent Codex task-complete events into codex-mem observations when opening the dashboard."
+        },
+        "codexMem.autoSyncLookbackDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "maximum": 30,
+          "description": "How many recent days of Codex session logs are scanned for task-complete events."
+        },
+        "codexMem.autoSyncMaxImport": {
+          "type": "number",
+          "default": 25,
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum number of new Codex tasks imported into memory per sync run."
+        },
+        "codexMem.codexSessionsPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional custom path to Codex sessions directory. Leave empty to use ~/.codex/sessions."
         }
       }
     }

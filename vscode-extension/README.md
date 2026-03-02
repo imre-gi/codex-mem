@@ -53,6 +53,7 @@ code --install-extension codex-mem-vscode-0.1.1.vsix
 - `Codex Mem: Start Worker`
 - `Codex Mem: Stop Worker`
 - `Codex Mem: Worker Status`
+- `Codex Mem: Sync Codex Tasks`
 - `Codex Mem: Status Dashboard`
 - `Codex Mem: Open Settings`
 - `Codex Mem: Initialize Store`
@@ -66,6 +67,10 @@ code --install-extension codex-mem-vscode-0.1.1.vsix
 
 - `codexMem.cliPath`: optional explicit path to `codex-mem` binary or `dist/cli.js`.
 - `codexMem.defaultProject`: optional default project name.
+- `codexMem.autoSyncCodexTasks`: auto-import recent Codex `task_complete` events into memory when dashboard refreshes.
+- `codexMem.autoSyncLookbackDays`: how many recent days of Codex sessions are scanned.
+- `codexMem.autoSyncMaxImport`: max new tasks imported per sync run.
+- `codexMem.codexSessionsPath`: optional override for Codex sessions directory (default `~/.codex/sessions`).
 
 ## CLI Discovery
 
@@ -113,7 +118,16 @@ Status Dashboard provides:
 - MCP registration/config state
 - KPI totals
 - recent memory task execution list
-- action buttons for refresh/setup/start/stop worker
+- Codex task-ingestion status (detected/imported/skipped/errors)
+- action buttons for refresh/setup/sync/start/stop worker
+
+## About "Tasks Executed"
+
+The dashboard `Tasks Executed` KPI is backed by stored codex-mem entries.
+
+- If your agent does not call `mem_add_observation`/`mem_add_summary`, the KPI will stay `0`.
+- To make this work out-of-the-box, the extension auto-syncs recent Codex `task_complete` events from session logs into codex-mem observations.
+- You can trigger a manual import any time with `Codex Mem: Sync Codex Tasks`.
 
 ## Development
 
