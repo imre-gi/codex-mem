@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +15,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = resolve(__dirname, "..");
 const VSCODE_EXTENSION_DIR = join(ROOT_DIR, "vscode-extension");
 const EXTENSION_PACKAGE_JSON = join(VSCODE_EXTENSION_DIR, "package.json");
+let codeCliResolutionHint = "";
 
 const mode = (process.argv[2] || "install").trim().toLowerCase();
 if (mode !== "install" && mode !== "reinstall") {
@@ -49,12 +56,17 @@ function installFlow() {
 
   const codeCli = resolveCodeCli();
   if (!codeCli) {
-    throw new Error([
+    throw new Error(
+      [
       "VS Code CLI not found.",
       "Install VS Code command-line integration (the 'code' command) and retry.",
       "Or set CODEX_MEM_VSCODE_CLI to a working VS Code CLI path/command.",
+      codeCliResolutionHint,
       `Generated VSIX: ${vsixFile}`
-    ].join("\n"));
+    ]
+        .filter(Boolean)
+        .join("\n")
+    );
   }
 
   log(`Using VS Code CLI: ${codeCli}`);
@@ -204,6 +216,7 @@ function resolveVsixPath() {
 }
 
 function resolveCodeCli() {
+  codeCliResolutionHint = "";
   const candidates = [];
   const envCli = (process.env.CODEX_MEM_VSCODE_CLI || "").trim();
   if (envCli) {
@@ -218,10 +231,124 @@ function resolveCodeCli() {
   candidates.push(...platformCodeCandidates());
 
   for (const candidate of unique(candidates)) {
-    const result = run(candidate, ["--version"], ROOT_DIR, true);
-    if (result.status === 0) {
-      return candidate;
+    if (!canRunCodeCli(candidate)) {
+      continue;
     }
+
+    const probe = ensureCodeCliUsable(candidate);
+    if (!probe.ok) {
+      if (!codeCliResolutionHint && probe.hint) {
+        codeCliResolutionHint = probe.hint;
+      }
+      continue;
+    }
+
+    return candidate;
+  }
+
+  return undefined;
+}
+
+function canRunCodeCli(candidate) {
+  const result = run(candidate, ["--version"], ROOT_DIR, true);
+  return result.status === 0;
+}
+
+function ensureCodeCliUsable(candidate) {
+  const firstProbe = run(candidate, ["--list-extensions"], ROOT_DIR, true);
+  if (firstProbe.status === 0) {
+    return { ok: true };
+  }
+
+  if (!looksLikeIpcSocketFailure(firstProbe)) {
+    return {
+      ok: false,
+      hint:
+        "Detected a VS Code CLI candidate, but it could not be used. Set CODEX_MEM_VSCODE_CLI to a working 'code' command/path."
+    };
+  }
+
+  const sockets = resolveVsCodeIpcSocketCandidates();
+  if (!sockets.length) {
+    return {
+      ok: false,
+      hint:
+        "Detected a VS Code remote CLI, but no active VS Code IPC socket was found. Open a VS Code remote window and retry, or set CODEX_MEM_VSCODE_CLI to a local 'code' command."
+    };
+  }
+
+  for (const socket of sockets) {
+    if (process.env.VSCODE_IPC_HOOK_CLI !== socket) {
+      process.env.VSCODE_IPC_HOOK_CLI = socket;
+      log(`Using VS Code IPC socket: ${socket}`);
+    }
+
+    const retryProbe = run(candidate, ["--list-extensions"], ROOT_DIR, true);
+    if (retryProbe.status === 0) {
+      return { ok: true };
+    }
+  }
+
+  return {
+    ok: false,
+    hint:
+      "Detected a VS Code remote CLI, but the IPC socket could not be reached. Open/reload the remote VS Code window and retry, or set CODEX_MEM_VSCODE_CLI."
+  };
+}
+
+function looksLikeIpcSocketFailure(result) {
+  const output = `${result.stderr || ""}\n${result.stdout || ""}`;
+  return (
+    output.includes("Unable to connect to VS Code server") ||
+    output.includes("connect ENOENT") ||
+    /vscode-ipc-[\w-]+\.sock/.test(output)
+  );
+}
+
+function resolveVsCodeIpcSocketCandidates() {
+  const sockets = [];
+  const envSocket = (process.env.VSCODE_IPC_HOOK_CLI || "").trim();
+  if (envSocket && existsSync(envSocket)) {
+    sockets.push(envSocket);
+  }
+
+  const runtimeDir = resolveRuntimeDir();
+  if (!runtimeDir || !existsSync(runtimeDir)) {
+    return unique(sockets);
+  }
+
+  try {
+    const discovered = readdirSync(runtimeDir)
+      .filter((name) => /^vscode-ipc-.*\.sock$/.test(name))
+      .map((name) => join(runtimeDir, name))
+      .filter((candidate) => existsSync(candidate))
+      .sort((left, right) => getMtimeMs(right) - getMtimeMs(left));
+    for (const candidate of discovered) {
+      sockets.push(candidate);
+    }
+  } catch {
+    return unique(sockets);
+  }
+
+  return unique(sockets);
+}
+
+function getMtimeMs(path) {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+function resolveRuntimeDir() {
+  const explicit = (process.env.XDG_RUNTIME_DIR || "").trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  if (typeof process.getuid === "function") {
+    return `/run/user/${process.getuid()}`;
   }
 
   return undefined;
