@@ -1,6 +1,7 @@
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
+import { homedir } from "node:os";
 import * as vscode from "vscode";
 
 interface JsonResult {
@@ -12,11 +13,53 @@ interface CliResolution {
   baseArgs: string[];
 }
 
+interface DashboardTask {
+  id?: number;
+  kind: string;
+  title: string;
+  excerpt: string;
+  createdAt: string;
+}
+
+interface DashboardData {
+  generatedAt: string;
+  dataFile: string;
+  worker: {
+    running: boolean;
+    pid?: number;
+    uptimeSeconds?: number;
+    baseUrl: string;
+    host: string;
+    port?: number;
+  };
+  mcp: {
+    configured: boolean;
+    command: string;
+    args: string[];
+    configPath: string;
+  };
+  kpis: {
+    entriesTotal: number;
+    observationsTotal: number;
+    summariesTotal: number;
+    projectsTotal: number;
+    latestEntryAt?: string;
+    oldestEntryAt?: string;
+  };
+  recentTasks: DashboardTask[];
+  error?: string;
+}
+
 const OUTPUT = vscode.window.createOutputChannel("Codex Mem");
+const DASHBOARD_VIEW_TYPE = "codexMem.statusDashboard.view";
+const DASHBOARD_TITLE = "Codex Mem Dashboard";
+const MCP_SERVER_SECTION = "mcp_servers.codex-mem";
+const CODEX_CONFIG_PATH = join(homedir(), ".codex", "config.toml");
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(OUTPUT);
   OUTPUT.appendLine("Codex Mem extension activated.");
+  let dashboardPanel: vscode.WebviewPanel | undefined;
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.setup", async () => {
@@ -60,9 +103,61 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.statusDashboard", async () => {
-      const status = await runCliJson(["kpis"]);
-      const markdown = buildStatusDashboard(status);
-      await openTextDocument(markdown, "markdown", "codex-mem-status-dashboard.md");
+      if (!dashboardPanel) {
+        dashboardPanel = vscode.window.createWebviewPanel(
+          DASHBOARD_VIEW_TYPE,
+          DASHBOARD_TITLE,
+          vscode.ViewColumn.Active,
+          {
+            enableScripts: true,
+            retainContextWhenHidden: true
+          }
+        );
+
+        dashboardPanel.onDidDispose(() => {
+          dashboardPanel = undefined;
+        });
+
+        dashboardPanel.webview.onDidReceiveMessage(async (message: unknown) => {
+          if (!dashboardPanel) {
+            return;
+          }
+
+          const cmd = toText(toRecord(message).command);
+          if (!cmd) {
+            return;
+          }
+
+          if (cmd === "refresh") {
+            await renderDashboardPanel(dashboardPanel);
+            return;
+          }
+
+          if (cmd === "setup") {
+            await runAndShowJson(
+              ["setup"],
+              "Codex Mem setup complete. MCP enabled and worker started."
+            );
+            await renderDashboardPanel(dashboardPanel);
+            return;
+          }
+
+          if (cmd === "start-worker") {
+            await runAndShowJson(["worker", "start"], "Codex Mem worker started.");
+            await renderDashboardPanel(dashboardPanel);
+            return;
+          }
+
+          if (cmd === "stop-worker") {
+            await runAndShowJson(["worker", "stop"], "Codex Mem worker stopped.");
+            await renderDashboardPanel(dashboardPanel);
+            return;
+          }
+        }, undefined, context.subscriptions);
+      }
+
+      dashboardPanel.reveal(vscode.ViewColumn.Active);
+      await renderDashboardPanel(dashboardPanel);
     })
   );
 
@@ -453,42 +548,488 @@ async function openTextDocument(
   await vscode.window.showTextDocument(document, { preview: false });
 }
 
-function buildStatusDashboard(payload: JsonResult): string {
-  const root = toRecord(payload);
-  const worker = toRecord(root.worker);
-  const kpis = toRecord(root.kpis);
+async function renderDashboardPanel(panel: vscode.WebviewPanel): Promise<void> {
+  panel.webview.html = getDashboardHtml(createEmptyDashboardData(), true);
 
-  const running = toBoolean(worker.running);
-  const workerLabel = running ? "running" : "stopped";
-  const dataFile = toText(root.dataFile) || toText(worker.dataFile) || "n/a";
-  const generatedAt = new Date().toLocaleString();
+  try {
+    const data = await collectDashboardData();
+    panel.webview.html = getDashboardHtml(data, false);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    OUTPUT.appendLine(`Dashboard render failed: ${message}`);
+    panel.webview.html = getDashboardHtml(createEmptyDashboardData(message), false);
+  }
+}
 
-  const lines = [
-    "# Codex Mem Status Dashboard",
-    "",
-    `Generated: ${generatedAt}`,
-    "",
-    "## Worker",
-    `- State: ${workerLabel}`,
-    `- PID: ${toNumber(worker.pid) ?? "n/a"}`,
-    `- Uptime: ${formatUptime(toNumber(worker.uptimeSeconds))}`,
-    `- Endpoint: ${toText(worker.baseUrl) || "n/a"}`,
-    `- Host: ${toText(worker.host) || "n/a"}`,
-    `- Port: ${toNumber(worker.port) ?? "n/a"}`,
-    "",
-    "## Memory KPIs",
-    `- Total entries: ${toNumber(kpis.entriesTotal) ?? 0}`,
-    `- Observations: ${toNumber(kpis.observationsTotal) ?? 0}`,
-    `- Summaries: ${toNumber(kpis.summariesTotal) ?? 0}`,
-    `- Projects: ${toNumber(kpis.projectsTotal) ?? 0}`,
-    `- Latest entry: ${formatIso(toText(kpis.latestEntryAt))}`,
-    `- Oldest entry: ${formatIso(toText(kpis.oldestEntryAt))}`,
-    "",
-    "## Storage",
-    `- DB file: ${dataFile}`
-  ];
+async function collectDashboardData(): Promise<DashboardData> {
+  const [statusPayload, recentPayload] = await Promise.all([
+    runCliJson(["kpis"]),
+    runCliJson(["search", "--limit", "8"])
+  ]);
 
-  return lines.join("\n");
+  const statusRoot = toRecord(statusPayload);
+  const worker = toRecord(statusRoot.worker);
+  const kpis = toRecord(statusRoot.kpis);
+  const recentRoot = toRecord(recentPayload);
+  const mcp = readMcpStatus();
+  const recentSource = Array.isArray(recentRoot.results) ? recentRoot.results : [];
+
+  const recentTasks = recentSource
+    .map((item) => toRecord(item))
+    .map((item) => ({
+      id: toNumber(item.id),
+      kind: toText(item.kind) || "unknown",
+      title: toText(item.title) || "(no title)",
+      excerpt: toText(item.excerpt) || "",
+      createdAt: toText(item.createdAt) || ""
+    }))
+    .filter((item) => Boolean(item.createdAt || item.title));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    dataFile: toText(statusRoot.dataFile) || toText(worker.dataFile) || "n/a",
+    worker: {
+      running: toBoolean(worker.running),
+      pid: toNumber(worker.pid),
+      uptimeSeconds: toNumber(worker.uptimeSeconds),
+      baseUrl: toText(worker.baseUrl) || "n/a",
+      host: toText(worker.host) || "n/a",
+      port: toNumber(worker.port)
+    },
+    mcp,
+    kpis: {
+      entriesTotal: toNumber(kpis.entriesTotal) ?? 0,
+      observationsTotal: toNumber(kpis.observationsTotal) ?? 0,
+      summariesTotal: toNumber(kpis.summariesTotal) ?? 0,
+      projectsTotal: toNumber(kpis.projectsTotal) ?? 0,
+      latestEntryAt: toText(kpis.latestEntryAt),
+      oldestEntryAt: toText(kpis.oldestEntryAt)
+    },
+    recentTasks
+  };
+}
+
+function createEmptyDashboardData(error?: string): DashboardData {
+  return {
+    generatedAt: new Date().toISOString(),
+    dataFile: "n/a",
+    worker: {
+      running: false,
+      baseUrl: "n/a",
+      host: "n/a"
+    },
+    mcp: {
+      configured: false,
+      command: "n/a",
+      args: [],
+      configPath: CODEX_CONFIG_PATH
+    },
+    kpis: {
+      entriesTotal: 0,
+      observationsTotal: 0,
+      summariesTotal: 0,
+      projectsTotal: 0
+    },
+    recentTasks: [],
+    error
+  };
+}
+
+function readMcpStatus(): DashboardData["mcp"] {
+  const fallback: DashboardData["mcp"] = {
+    configured: false,
+    command: "n/a",
+    args: [],
+    configPath: CODEX_CONFIG_PATH
+  };
+
+  try {
+    if (!existsSync(CODEX_CONFIG_PATH)) {
+      return fallback;
+    }
+
+    const lines = readFileSync(CODEX_CONFIG_PATH, "utf8").split(/\r?\n/);
+    let inSection = false;
+    let foundSection = false;
+    let command = "";
+    let args: string[] = [];
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      if (trimmed.startsWith("[")) {
+        if (trimmed === `[${MCP_SERVER_SECTION}]`) {
+          inSection = true;
+          foundSection = true;
+          continue;
+        }
+
+        if (inSection) {
+          break;
+        }
+
+        continue;
+      }
+
+      if (!inSection) {
+        continue;
+      }
+
+      const commandMatch = trimmed.match(/^command\s*=\s*"([^"]+)"/);
+      if (commandMatch && commandMatch[1]) {
+        command = commandMatch[1];
+        continue;
+      }
+
+      if (trimmed.startsWith("args")) {
+        args = [...trimmed.matchAll(/"([^"]+)"/g)]
+          .map((match) => match[1])
+          .filter(Boolean);
+      }
+    }
+
+    if (!foundSection) {
+      return fallback;
+    }
+
+    return {
+      configured: true,
+      command: command || "n/a",
+      args,
+      configPath: CODEX_CONFIG_PATH
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function getDashboardHtml(data: DashboardData, loading: boolean): string {
+  const nonce = String(Date.now());
+  const workerState = data.worker.running ? "Running" : "Stopped";
+  const workerStateClass = data.worker.running ? "status-ok" : "status-warn";
+  const mcpStateClass = data.mcp.configured ? "status-ok" : "status-warn";
+  const mcpState = data.mcp.configured ? "Configured" : "Missing";
+  const recentItems =
+    data.recentTasks.length > 0
+      ? data.recentTasks
+          .map((item) => {
+            const title = escapeHtml(item.title);
+            const kind = escapeHtml(item.kind);
+            const id = item.id !== undefined ? `#${item.id}` : "n/a";
+            const createdAt = formatIso(item.createdAt);
+            const excerpt = escapeHtml(item.excerpt || "No details");
+            return `
+              <li class="task-item">
+                <div class="task-title">${title}</div>
+                <div class="task-meta">${id} · ${kind} · ${escapeHtml(createdAt)}</div>
+                <div class="task-excerpt">${excerpt}</div>
+              </li>
+            `;
+          })
+          .join("")
+      : `<li class="task-empty">No memory tasks found yet.</li>`;
+
+  const errorBlock = data.error
+    ? `<div class="error-box">Dashboard error: ${escapeHtml(data.error)}</div>`
+    : "";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex Mem Dashboard</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg-0: #0d1117;
+        --bg-1: #141b24;
+        --bg-2: #1d2633;
+        --fg-0: #f2f6fa;
+        --fg-1: #bac8d8;
+        --accent: #26a269;
+        --warn: #e5a50a;
+        --danger: #e66100;
+        --line: #293444;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "IBM Plex Sans", "Noto Sans", sans-serif;
+        background: radial-gradient(circle at 20% 0%, #1f2f44 0%, var(--bg-0) 55%);
+        color: var(--fg-0);
+      }
+
+      .wrap {
+        padding: 20px;
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+
+      .topbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .title {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+      }
+
+      .subtitle {
+        color: var(--fg-1);
+        font-size: 12px;
+      }
+
+      .actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      button {
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, #202b39, #141c27);
+        color: var(--fg-0);
+        padding: 8px 11px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      button:hover {
+        border-color: #3c4f69;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(160px, 1fr));
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .card {
+        background: linear-gradient(170deg, var(--bg-1), var(--bg-2));
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+      }
+
+      .label {
+        color: var(--fg-1);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 7px;
+      }
+
+      .value {
+        font-size: 22px;
+        font-weight: 700;
+      }
+
+      .status-pill {
+        display: inline-block;
+        margin-top: 4px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .status-ok {
+        background: rgba(38, 162, 105, 0.18);
+        color: #7ce6b7;
+      }
+
+      .status-warn {
+        background: rgba(229, 165, 10, 0.2);
+        color: #ffd387;
+      }
+
+      .panels {
+        display: grid;
+        grid-template-columns: 1.35fr 1fr;
+        gap: 12px;
+      }
+
+      .panel {
+        background: linear-gradient(170deg, #152030, #0f1723);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+      }
+
+      .panel h3 {
+        margin: 0 0 10px;
+        font-size: 14px;
+      }
+
+      .kv {
+        display: grid;
+        grid-template-columns: 140px 1fr;
+        gap: 6px;
+        font-size: 12px;
+      }
+
+      .kv .k {
+        color: var(--fg-1);
+      }
+
+      .tasks {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        max-height: 320px;
+        overflow: auto;
+      }
+
+      .task-item {
+        border-top: 1px solid var(--line);
+        padding: 10px 0;
+      }
+
+      .task-item:first-child {
+        border-top: 0;
+        padding-top: 0;
+      }
+
+      .task-title {
+        font-weight: 600;
+        font-size: 13px;
+      }
+
+      .task-meta {
+        color: var(--fg-1);
+        font-size: 11px;
+        margin-top: 2px;
+      }
+
+      .task-excerpt {
+        font-size: 12px;
+        margin-top: 6px;
+        color: #d3dfed;
+      }
+
+      .task-empty {
+        color: var(--fg-1);
+        font-size: 12px;
+      }
+
+      .loading {
+        color: var(--fg-1);
+        font-size: 12px;
+        margin-bottom: 10px;
+      }
+
+      .error-box {
+        border: 1px solid rgba(230, 97, 0, 0.5);
+        background: rgba(230, 97, 0, 0.12);
+        color: #ffba92;
+        border-radius: 10px;
+        padding: 9px 10px;
+        margin-bottom: 10px;
+        font-size: 12px;
+      }
+
+      @media (max-width: 900px) {
+        .cards {
+          grid-template-columns: repeat(2, minmax(140px, 1fr));
+        }
+        .panels {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="topbar">
+        <div>
+          <div class="title">Codex Mem Dashboard</div>
+          <div class="subtitle">Updated ${escapeHtml(formatIso(data.generatedAt))}</div>
+        </div>
+        <div class="actions">
+          <button data-cmd="refresh">Refresh</button>
+          <button data-cmd="setup">Setup</button>
+          <button data-cmd="start-worker">Start Worker</button>
+          <button data-cmd="stop-worker">Stop Worker</button>
+        </div>
+      </div>
+
+      ${loading ? `<div class="loading">Refreshing dashboard data...</div>` : ""}
+      ${errorBlock}
+
+      <section class="cards">
+        <article class="card">
+          <div class="label">Worker</div>
+          <div class="value">${escapeHtml(workerState)}</div>
+          <div class="status-pill ${workerStateClass}">${escapeHtml(workerState)}</div>
+        </article>
+        <article class="card">
+          <div class="label">MCP</div>
+          <div class="value">${escapeHtml(mcpState)}</div>
+          <div class="status-pill ${mcpStateClass}">${escapeHtml(mcpState)}</div>
+        </article>
+        <article class="card">
+          <div class="label">Tasks Executed</div>
+          <div class="value">${data.kpis.entriesTotal}</div>
+        </article>
+        <article class="card">
+          <div class="label">Projects</div>
+          <div class="value">${data.kpis.projectsTotal}</div>
+        </article>
+      </section>
+
+      <section class="panels">
+        <article class="panel">
+          <h3>Runtime + MCP Status</h3>
+          <div class="kv">
+            <div class="k">Worker PID</div><div>${data.worker.pid ?? "n/a"}</div>
+            <div class="k">Worker Uptime</div><div>${escapeHtml(formatUptime(data.worker.uptimeSeconds))}</div>
+            <div class="k">Worker Endpoint</div><div>${escapeHtml(data.worker.baseUrl)}</div>
+            <div class="k">Worker Host/Port</div><div>${escapeHtml(`${data.worker.host}:${data.worker.port ?? "n/a"}`)}</div>
+            <div class="k">MCP Command</div><div>${escapeHtml(data.mcp.command)}</div>
+            <div class="k">MCP Args</div><div>${escapeHtml(data.mcp.args.join(" ")) || "n/a"}</div>
+            <div class="k">MCP Config</div><div>${escapeHtml(data.mcp.configPath)}</div>
+            <div class="k">DB File</div><div>${escapeHtml(data.dataFile)}</div>
+            <div class="k">Observations</div><div>${data.kpis.observationsTotal}</div>
+            <div class="k">Summaries</div><div>${data.kpis.summariesTotal}</div>
+            <div class="k">Latest Entry</div><div>${escapeHtml(formatIso(data.kpis.latestEntryAt))}</div>
+            <div class="k">Oldest Entry</div><div>${escapeHtml(formatIso(data.kpis.oldestEntryAt))}</div>
+          </div>
+        </article>
+        <article class="panel">
+          <h3>Recent Tasks Executed</h3>
+          <ul class="tasks">${recentItems}</ul>
+        </article>
+      </section>
+    </div>
+    <script nonce="${nonce}">
+      const vscode = acquireVsCodeApi();
+      for (const button of document.querySelectorAll("button[data-cmd]")) {
+        button.addEventListener("click", () => {
+          vscode.postMessage({ command: button.getAttribute("data-cmd") });
+        });
+      }
+    </script>
+  </body>
+</html>`;
 }
 
 function toRecord(value: unknown): JsonResult {
@@ -511,6 +1052,15 @@ function toNumber(value: unknown): number | undefined {
     return value;
   }
   return undefined;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function formatUptime(seconds: number | undefined): string {

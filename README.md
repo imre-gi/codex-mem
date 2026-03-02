@@ -75,8 +75,10 @@ codex-mem/
 
 ## Install
 
+In commands below, `<repo-root>` means the directory where you cloned `codex-mem`.
+
 ```bash
-cd /home/imre/Development/codex-mem
+cd <repo-root>
 npm run install:vscode
 ```
 
@@ -87,15 +89,22 @@ npm run install:vscode
 3. build `codex-mem`
 4. package/install local VS Code extension
 5. one-time MCP registration + worker startup (`node dist/cli.js setup`)
+6. installs extension into detected VS Code user profiles
 
 For a fully clean reinstall:
 
 ```bash
-cd /home/imre/Development/codex-mem
+cd <repo-root>
 npm run reinstall:vscode
 ```
 
 This removes prior local codex-mem extension + MCP config entries, then performs the full install again.
+
+Profile override (optional):
+
+```bash
+CODEX_MEM_VSCODE_PROFILE="<profile-name>" npm run reinstall:vscode
+```
 
 ## Getting Started (New Machine)
 
@@ -106,7 +115,7 @@ If this is a fresh install and you want the fastest path to working MCP memory:
 3. Run:
 
 ```bash
-cd /home/imre/Development/codex-mem
+cd <repo-root>
 npm run install:vscode
 ```
 
@@ -187,7 +196,7 @@ node dist/cli.js worker stop
 Register `codex-mem` MCP server with Codex:
 
 ```bash
-codex mcp add codex-mem -- node /home/imre/Development/codex-mem/dist/cli.js mcp
+codex mcp add codex-mem -- node "$(pwd)/dist/cli.js" mcp
 ```
 
 The `mcp` command auto-starts the worker backend if needed.
@@ -216,7 +225,7 @@ npm install -g @openai/codex
 Or use `npx`:
 
 ```bash
-npx @openai/codex mcp add codex-mem -- node /home/imre/Development/codex-mem/dist/cli.js mcp
+npx @openai/codex mcp add codex-mem -- node "$(pwd)/dist/cli.js" mcp
 ```
 
 ## Worker Service
@@ -496,13 +505,13 @@ Local extension package: `vscode-extension/`.
 From repo root:
 
 ```bash
-cd /home/imre/Development/codex-mem
+cd <repo-root>
 npm run install:vscode
 ```
 
 Then restart VS Code and run:
 
-- `Codex Mem: Status Dashboard`
+- `Codex Mem: Status Dashboard` (visual dashboard webview with refresh/actions)
 - `Codex Mem: Open Settings`
 - `Codex Mem: Setup (Enable + Start Worker)`
 
@@ -511,7 +520,7 @@ Then restart VS Code and run:
 Build:
 
 ```bash
-cd /home/imre/Development/codex-mem/vscode-extension
+cd <repo-root>/vscode-extension
 npm install
 npm run build
 ```
@@ -538,7 +547,7 @@ Run extension dev host:
 ### Option B: Install As `.vsix`
 
 ```bash
-cd /home/imre/Development/codex-mem/vscode-extension
+cd <repo-root>/vscode-extension
 npm install
 npm run build
 npx @vscode/vsce package
@@ -553,6 +562,14 @@ After installing, run command palette action:
 Search tip:
 
 - use `Ctrl+Shift+P` and type `Codex Mem` (with a space, not `codex-mem`)
+
+Dashboard includes:
+
+- worker health/status
+- MCP config status
+- KPI cards (entries, observations, summaries, projects)
+- recent memory task executions
+- action buttons (`Refresh`, `Setup`, `Start Worker`, `Stop Worker`)
 
 Extension settings:
 
@@ -601,7 +618,7 @@ node dist/cli.js mcp --port 37888
 
 Set `codexMem.cliPath` to:
 
-- `/home/imre/Development/codex-mem/dist/cli.js` (script path), or
+- `<repo-root>/dist/cli.js` (script path), or
 - `codex-mem` (if linked/global)
 
 ### `Codex Mem` commands do not appear in Command Palette
@@ -609,7 +626,7 @@ Set `codexMem.cliPath` to:
 Run a clean reinstall:
 
 ```bash
-cd /home/imre/Development/codex-mem
+cd <repo-root>
 npm run reinstall:vscode
 ```
 
@@ -618,6 +635,13 @@ Then in VS Code:
 1. run `Developer: Reload Window`
 2. open `Ctrl+Shift+P`
 3. search `Codex Mem`
+
+If you use multiple VS Code profiles, force a profile-specific install:
+
+```bash
+cd <repo-root>
+CODEX_MEM_VSCODE_PROFILE="<profile-name>" npm run reinstall:vscode
+```
 
 ### VS Code extension commands run, but Codex still has no memory tools
 
@@ -631,7 +655,7 @@ codex mcp list
 If needed, rerun:
 
 ```bash
-node /home/imre/Development/codex-mem/dist/cli.js setup
+node dist/cli.js setup
 ```
 
 ### Node version errors

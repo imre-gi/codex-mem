@@ -4,24 +4,32 @@ This extension adds Codex Mem commands to VS Code and runs the `codex-mem` CLI b
 
 ## Install
 
+In commands below, `<repo-root>` means the directory where you cloned `codex-mem`.
+
 ### One-command install (from repo root, recommended)
 
 ```bash
-cd /home/imre/Development/codex-mem
+cd <repo-root>
 npm run install:vscode
 ```
 
 For a clean reinstall from scratch:
 
 ```bash
-cd /home/imre/Development/codex-mem
+cd <repo-root>
 npm run reinstall:vscode
+```
+
+Profile override (optional):
+
+```bash
+CODEX_MEM_VSCODE_PROFILE="<profile-name>" npm run reinstall:vscode
 ```
 
 ### Development Host
 
 ```bash
-cd /home/imre/Development/codex-mem/vscode-extension
+cd <repo-root>/vscode-extension
 npm install
 npm run build
 ```
@@ -31,7 +39,7 @@ Open this folder in VS Code and press `F5`.
 ### VSIX (normal installation)
 
 ```bash
-cd /home/imre/Development/codex-mem/vscode-extension
+cd <repo-root>/vscode-extension
 npm install
 npm run build
 npm run package
@@ -74,7 +82,7 @@ The extension resolves CLI in this order:
 ## First Run Checklist
 
 1. Run `Codex Mem: Setup (Enable + Start Worker)`
-2. Run `Codex Mem: Status Dashboard`
+2. Run `Codex Mem: Status Dashboard` (visual webview)
 3. Run `Codex Mem: Open Settings` (optional, to set `codexMem.cliPath`)
 4. Confirm `Codex Mem: Worker Status` returns `running: true`
 5. In terminal, verify MCP registration:
@@ -85,7 +93,7 @@ codex mcp get codex-mem
 
 If CLI lookup fails, set `codexMem.cliPath` to:
 
-- `/home/imre/Development/codex-mem/dist/cli.js`, or
+- `<repo-root>/dist/cli.js`, or
 - a globally available `codex-mem` binary.
 
 If commands are missing in `Ctrl+Shift+P`, run:
@@ -93,10 +101,24 @@ If commands are missing in `Ctrl+Shift+P`, run:
 1. `Developer: Reload Window`
 2. search for `Codex Mem` (with space)
 
+If you use multiple VS Code profiles, reinstall with explicit profile:
+
+```bash
+CODEX_MEM_VSCODE_PROFILE="<profile-name>" npm run reinstall:vscode
+```
+
+Status Dashboard provides:
+
+- worker runtime state
+- MCP registration/config state
+- KPI totals
+- recent memory task execution list
+- action buttons for refresh/setup/start/stop worker
+
 ## Development
 
 ```bash
-cd /home/imre/Development/codex-mem/vscode-extension
+cd <repo-root>/vscode-extension
 npm install
 npm run build
 ```
