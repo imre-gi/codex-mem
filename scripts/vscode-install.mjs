@@ -40,6 +40,9 @@ function installFlow() {
   log("Installing root dependencies");
   runNpm(["install"], ROOT_DIR);
 
+  log("Rebuilding native dependencies for current Node runtime");
+  runNpm(["rebuild", "better-sqlite3"], ROOT_DIR);
+
   log("Installing VS Code extension dependencies");
   runNpm(["install"], VSCODE_EXTENSION_DIR);
 

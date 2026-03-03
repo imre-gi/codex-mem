@@ -1,9 +1,4 @@
-import {
-  accessSync,
-  constants,
-  existsSync,
-  readFileSync
-} from "node:fs";
+import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
@@ -175,7 +170,7 @@ const OBSERVATION_TYPES = new Set([
   "refactor",
   "discovery",
   "decision",
-  "change"
+  "change",
 ]);
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -184,53 +179,57 @@ export function activate(context: vscode.ExtensionContext): void {
   let dashboardPanel: vscode.WebviewPanel | undefined;
   const sidebarProvider = new QuickInputSidebarProvider();
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(QUICK_INPUT_VIEW_TYPE, sidebarProvider, {
-      webviewOptions: { retainContextWhenHidden: true }
-    })
+    vscode.window.registerWebviewViewProvider(
+      QUICK_INPUT_VIEW_TYPE,
+      sidebarProvider,
+      {
+        webviewOptions: { retainContextWhenHidden: true },
+      },
+    ),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.setup", async () => {
       await runAndShowJson(
         ["setup"],
-        "Retentia setup complete. MCP enabled and worker started."
+        "Retentia setup complete. MCP enabled and worker started.",
       );
       await sidebarProvider.refreshStatus();
-    })
+    }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.enableMcp", async () => {
       await runAndShowJson(["enable"], "Retentia MCP registration completed.");
-    })
+    }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.initStore", async () => {
       await runAndShowJson(["init"], "retentia store initialized");
       await sidebarProvider.refreshStatus();
-    })
+    }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.startWorker", async () => {
       await runAndShowJson(["worker", "start"], "Retentia worker started.");
       await sidebarProvider.refreshStatus();
-    })
+    }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.stopWorker", async () => {
       await runAndShowJson(["worker", "stop"], "Retentia worker stopped.");
       await sidebarProvider.refreshStatus();
-    })
+    }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.workerStatus", async () => {
       const status = await runCliJson(["worker", "status"]);
       await openJsonDocument(status, "retentia-worker-status.json");
-    })
+    }),
   );
 
   context.subscriptions.push(
@@ -238,16 +237,16 @@ export function activate(context: vscode.ExtensionContext): void {
       const metrics = await syncTaskExecutions({ force: true });
       OUTPUT.appendLine(`Task sync metrics: ${JSON.stringify(metrics)}`);
       vscode.window.showInformationMessage(
-        `LLM task sync complete. Imported ${metrics.importedTasks} of ${metrics.detectedTasks} detected tasks.`
+        `LLM task sync complete. Imported ${metrics.importedTasks} of ${metrics.detectedTasks} detected tasks.`,
       );
       await sidebarProvider.refreshStatus();
-    })
+    }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.projectExplorer", async () => {
       await vscode.commands.executeCommand("codexMem.statusDashboard");
-    })
+    }),
   );
 
   context.subscriptions.push(
@@ -259,74 +258,86 @@ export function activate(context: vscode.ExtensionContext): void {
           vscode.ViewColumn.Active,
           {
             enableScripts: true,
-            retainContextWhenHidden: true
-          }
+            retainContextWhenHidden: true,
+          },
         );
 
         dashboardPanel.onDidDispose(() => {
           dashboardPanel = undefined;
         });
 
-        dashboardPanel.webview.onDidReceiveMessage(async (message: unknown) => {
-          if (!dashboardPanel) {
-            return;
-          }
+        dashboardPanel.webview.onDidReceiveMessage(
+          async (message: unknown) => {
+            if (!dashboardPanel) {
+              return;
+            }
 
-          const cmd = toText(toRecord(message).command);
-          if (!cmd) {
-            return;
-          }
+            const cmd = toText(toRecord(message).command);
+            if (!cmd) {
+              return;
+            }
 
-          if (cmd === "refresh") {
-            await renderDashboardPanel(dashboardPanel);
-            return;
-          }
+            if (cmd === "refresh") {
+              await renderDashboardPanel(dashboardPanel);
+              return;
+            }
 
-          if (cmd === "setup") {
-            await runAndShowJson(
-              ["setup"],
-              "Retentia setup complete. MCP enabled and worker started."
-            );
-            await renderDashboardPanel(dashboardPanel);
-            return;
-          }
+            if (cmd === "setup") {
+              await runAndShowJson(
+                ["setup"],
+                "Retentia setup complete. MCP enabled and worker started.",
+              );
+              await renderDashboardPanel(dashboardPanel);
+              return;
+            }
 
-          if (cmd === "start-worker") {
-            await runAndShowJson(["worker", "start"], "Retentia worker started.");
-            await renderDashboardPanel(dashboardPanel);
-            return;
-          }
+            if (cmd === "start-worker") {
+              await runAndShowJson(
+                ["worker", "start"],
+                "Retentia worker started.",
+              );
+              await renderDashboardPanel(dashboardPanel);
+              return;
+            }
 
-          if (cmd === "stop-worker") {
-            await runAndShowJson(["worker", "stop"], "Retentia worker stopped.");
-            await renderDashboardPanel(dashboardPanel);
-            return;
-          }
+            if (cmd === "stop-worker") {
+              await runAndShowJson(
+                ["worker", "stop"],
+                "Retentia worker stopped.",
+              );
+              await renderDashboardPanel(dashboardPanel);
+              return;
+            }
 
-          if (cmd === "sync-tasks") {
-            const metrics = await syncTaskExecutions({ force: true });
-            OUTPUT.appendLine(`Dashboard sync metrics: ${JSON.stringify(metrics)}`);
-            vscode.window.showInformationMessage(
-              `LLM task sync complete. Imported ${metrics.importedTasks} task(s).`
-            );
-            await renderDashboardPanel(dashboardPanel);
-            return;
-          }
-        }, undefined, context.subscriptions);
+            if (cmd === "sync-tasks") {
+              const metrics = await syncTaskExecutions({ force: true });
+              OUTPUT.appendLine(
+                `Dashboard sync metrics: ${JSON.stringify(metrics)}`,
+              );
+              vscode.window.showInformationMessage(
+                `LLM task sync complete. Imported ${metrics.importedTasks} task(s).`,
+              );
+              await renderDashboardPanel(dashboardPanel);
+              return;
+            }
+          },
+          undefined,
+          context.subscriptions,
+        );
       }
 
       dashboardPanel.reveal(vscode.ViewColumn.Active);
       await renderDashboardPanel(dashboardPanel);
-    })
+    }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.openSettings", async () => {
       await vscode.commands.executeCommand(
         "workbench.action.openSettings",
-        `@ext:${context.extension.id} codexMem`
+        `@ext:${context.extension.id} codexMem`,
       );
-    })
+    }),
   );
 
   context.subscriptions.push(
@@ -335,7 +346,8 @@ export function activate(context: vscode.ExtensionContext): void {
         title: "Retentia: Observation Title",
         prompt: "Short title",
         ignoreFocusOut: true,
-        validateInput: (value) => (value.trim() ? undefined : "Title is required")
+        validateInput: (value) =>
+          value.trim() ? undefined : "Title is required",
       });
       if (!title) {
         return;
@@ -346,19 +358,27 @@ export function activate(context: vscode.ExtensionContext): void {
         prompt: "Detailed observation",
         ignoreFocusOut: true,
         validateInput: (value) =>
-          value.trim() ? undefined : "Content is required"
+          value.trim() ? undefined : "Content is required",
       });
       if (!content) {
         return;
       }
 
       const type = await vscode.window.showQuickPick(
-        ["note", "bugfix", "feature", "refactor", "discovery", "decision", "change"],
+        [
+          "note",
+          "bugfix",
+          "feature",
+          "refactor",
+          "discovery",
+          "decision",
+          "change",
+        ],
         {
           title: "Retentia: Observation Type",
           canPickMany: false,
-          ignoreFocusOut: true
-        }
+          ignoreFocusOut: true,
+        },
       );
       if (!type) {
         return;
@@ -367,13 +387,13 @@ export function activate(context: vscode.ExtensionContext): void {
       const tags = await vscode.window.showInputBox({
         title: "Retentia: Tags (optional)",
         prompt: "Comma-separated tags",
-        ignoreFocusOut: true
+        ignoreFocusOut: true,
       });
 
       const files = await vscode.window.showInputBox({
         title: "Retentia: Files (optional)",
         prompt: "Comma-separated file paths",
-        ignoreFocusOut: true
+        ignoreFocusOut: true,
       });
 
       const result = await runCliJson(
@@ -383,13 +403,13 @@ export function activate(context: vscode.ExtensionContext): void {
           type,
           project: getDefaultProject(),
           tags,
-          files
-        })
+          files,
+        }),
       );
       const id = typeof result.id === "number" ? `#${result.id}` : "entry";
       vscode.window.showInformationMessage(`Saved observation ${id}.`);
       await sidebarProvider.refreshStatus();
-    })
+    }),
   );
 
   context.subscriptions.push(
@@ -398,7 +418,8 @@ export function activate(context: vscode.ExtensionContext): void {
         title: "Retentia: Learned",
         prompt: "What was learned",
         ignoreFocusOut: true,
-        validateInput: (value) => (value.trim() ? undefined : "Learned is required")
+        validateInput: (value) =>
+          value.trim() ? undefined : "Learned is required",
       });
       if (!learned) {
         return;
@@ -407,19 +428,19 @@ export function activate(context: vscode.ExtensionContext): void {
       const request = await vscode.window.showInputBox({
         title: "Retentia: Request (optional)",
         prompt: "Original request summary",
-        ignoreFocusOut: true
+        ignoreFocusOut: true,
       });
 
       const completed = await vscode.window.showInputBox({
         title: "Retentia: Completed (optional)",
         prompt: "What was completed",
-        ignoreFocusOut: true
+        ignoreFocusOut: true,
       });
 
       const nextSteps = await vscode.window.showInputBox({
         title: "Retentia: Next Steps (optional)",
         prompt: "What should happen next",
-        ignoreFocusOut: true
+        ignoreFocusOut: true,
       });
 
       const result = await runCliJson(
@@ -428,13 +449,13 @@ export function activate(context: vscode.ExtensionContext): void {
           request,
           completed,
           nextSteps,
-          project: getDefaultProject()
-        })
+          project: getDefaultProject(),
+        }),
       );
       const id = typeof result.id === "number" ? `#${result.id}` : "entry";
       vscode.window.showInformationMessage(`Saved summary ${id}.`);
       await sidebarProvider.refreshStatus();
-    })
+    }),
   );
 
   context.subscriptions.push(
@@ -442,7 +463,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const query = await vscode.window.showInputBox({
         title: "Retentia: Search",
         prompt: "Search query",
-        ignoreFocusOut: true
+        ignoreFocusOut: true,
       });
       if (query === undefined) {
         return;
@@ -476,14 +497,14 @@ export function activate(context: vscode.ExtensionContext): void {
           label: `#${id} ${title}`,
           description: String(item.kind ?? ""),
           detail,
-          id: Number(item.id)
+          id: Number(item.id),
         };
       });
 
       const picked = await vscode.window.showQuickPick(picks, {
         title: "Retentia: Search Results",
         placeHolder: "Select an entry to open details",
-        ignoreFocusOut: true
+        ignoreFocusOut: true,
       });
 
       if (!picked || Number.isNaN(picked.id)) {
@@ -492,7 +513,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       const entryResult = await runCliJson(["get", "--ids", String(picked.id)]);
       await openJsonDocument(entryResult, `retentia-entry-${picked.id}.json`);
-    })
+    }),
   );
 
   context.subscriptions.push(
@@ -500,7 +521,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const query = await vscode.window.showInputBox({
         title: "Retentia: Context Pack Query",
         prompt: "Optional query",
-        ignoreFocusOut: true
+        ignoreFocusOut: true,
       });
       if (query === undefined) {
         return;
@@ -518,7 +539,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       const output = await runCliRaw(args);
       await openTextDocument(output, "markdown", "retentia-context.md");
-    })
+    }),
   );
 
   context.subscriptions.push(
@@ -530,9 +551,11 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(dataFile));
+      const doc = await vscode.workspace.openTextDocument(
+        vscode.Uri.file(dataFile),
+      );
       await vscode.window.showTextDocument(doc, { preview: false });
-    })
+    }),
   );
 }
 
@@ -568,18 +591,19 @@ class QuickInputSidebarProvider implements vscode.WebviewViewProvider {
           workerRunning: toBoolean(worker.running),
           entriesTotal: toNumber(kpis.entriesTotal) ?? 0,
           projectsTotal: toNumber(kpis.projectsTotal) ?? 0,
-          dataFile: toText(payload.dataFile) || toText(worker.dataFile) || "n/a",
+          dataFile:
+            toText(payload.dataFile) || toText(worker.dataFile) || "n/a",
           workerBaseUrl: toText(worker.baseUrl) || "n/a",
-          updatedAt: new Date().toISOString()
-        }
+          updatedAt: new Date().toISOString(),
+        },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.view.webview.postMessage({
         command: "error",
         payload: {
-          message
-        }
+          message,
+        },
       });
     }
   }
@@ -612,7 +636,7 @@ class QuickInputSidebarProvider implements vscode.WebviewViewProvider {
       if (command === "setup") {
         await runAndShowJson(
           ["setup"],
-          "Retentia setup complete. MCP enabled and worker started."
+          "Retentia setup complete. MCP enabled and worker started.",
         );
         await this.refreshStatus();
         return;
@@ -633,7 +657,7 @@ class QuickInputSidebarProvider implements vscode.WebviewViewProvider {
       if (command === "sync-tasks") {
         const metrics = await syncTaskExecutions({ force: true });
         vscode.window.showInformationMessage(
-          `LLM task sync complete. Imported ${metrics.importedTasks} of ${metrics.detectedTasks} detected tasks.`
+          `LLM task sync complete. Imported ${metrics.importedTasks} of ${metrics.detectedTasks} detected tasks.`,
         );
         await this.refreshStatus();
         return;
@@ -655,7 +679,7 @@ class QuickInputSidebarProvider implements vscode.WebviewViewProvider {
       if (this.view) {
         this.view.webview.postMessage({
           command: "error",
-          payload: { message }
+          payload: { message },
         });
       }
     }
@@ -675,8 +699,8 @@ class QuickInputSidebarProvider implements vscode.WebviewViewProvider {
         type: toText(payload.type),
         project: toText(payload.project),
         tags: toText(payload.tags),
-        files: toText(payload.files)
-      })
+        files: toText(payload.files),
+      }),
     );
 
     const id = typeof result.id === "number" ? `#${result.id}` : "entry";
@@ -697,8 +721,8 @@ class QuickInputSidebarProvider implements vscode.WebviewViewProvider {
         completed: toText(payload.completed),
         nextSteps: toText(payload.nextSteps),
         tags: toText(payload.tags),
-        project: toText(payload.project)
-      })
+        project: toText(payload.project),
+      }),
     );
 
     const id = typeof result.id === "number" ? `#${result.id}` : "entry";
@@ -738,7 +762,7 @@ function buildObservationArgs(input: {
     "--content",
     input.content.trim(),
     "--type",
-    type
+    type,
   ];
 
   const project = input.project?.trim() || getDefaultProject();
@@ -787,7 +811,10 @@ function buildSummaryArgs(input: {
   return args;
 }
 
-async function runAndShowJson(args: string[], successMessage: string): Promise<void> {
+async function runAndShowJson(
+  args: string[],
+  successMessage: string,
+): Promise<void> {
   const json = await runCliJson(args);
   OUTPUT.appendLine(JSON.stringify(json, null, 2));
   vscode.window.showInformationMessage(successMessage);
@@ -801,7 +828,7 @@ async function runCliJson(args: string[]): Promise<JsonResult> {
     throw new Error(
       `Expected JSON from retentia, got: ${raw.slice(0, 280)}${
         raw.length > 280 ? "..." : ""
-      }`
+      }`,
     );
   }
 }
@@ -817,7 +844,7 @@ async function runCliRaw(args: string[]): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const child = spawn(resolution.command, finalArgs, {
       cwd,
-      env: process.env
+      env: process.env,
     });
 
     let stdout = "";
@@ -836,7 +863,7 @@ async function runCliRaw(args: string[]): Promise<string> {
         `Failed to start retentia CLI: ${error.message}`,
         `Set 'codexMem.cliPath' in VS Code settings, or ensure one of these exists:`,
         ...getAutoDetectCandidates(cwd).map((candidate) => `- ${candidate}`),
-        `Or make sure 'retentia' (or legacy 'codex-mem') is on PATH.`
+        `Or make sure 'retentia' (or legacy 'codex-mem') is on PATH.`,
       ].join("\n");
       OUTPUT.appendLine(message);
       reject(new Error(message));
@@ -848,8 +875,18 @@ async function runCliRaw(args: string[]): Promise<string> {
         return;
       }
 
-      const message =
-        `retentia command failed (exit ${code}).\n${stderr || stdout}`;
+      const output = stderr || stdout;
+      const hints: string[] = [];
+      if (output.includes("NODE_MODULE_VERSION")) {
+        hints.push(
+          "Native module ABI mismatch detected.",
+          "Run `npm rebuild better-sqlite3` in your Retentia project and reload VS Code.",
+        );
+      }
+
+      const message = `retentia command failed (exit ${code}).\n${output}${
+        hints.length ? `\n\n${hints.join("\n")}` : ""
+      }`;
       OUTPUT.appendLine(message);
       reject(new Error(message));
     });
@@ -867,7 +904,7 @@ function resolveCli(workspaceRoot: string): CliResolution {
       const script = isAbsolute(configured)
         ? configured
         : join(workspaceRoot, configured);
-      return { command: process.execPath, baseArgs: [script] };
+      return { command: resolveNodeCommand(), baseArgs: [script] };
     }
 
     return { command: configured, baseArgs: [] };
@@ -875,16 +912,21 @@ function resolveCli(workspaceRoot: string): CliResolution {
 
   const localScript = join(workspaceRoot, "dist", "cli.js");
   if (fileExists(localScript)) {
-    return { command: process.execPath, baseArgs: [localScript] };
+    return { command: resolveNodeCommand(), baseArgs: [localScript] };
   }
 
   for (const candidate of getAutoDetectCandidates(workspaceRoot)) {
     if (fileExists(candidate)) {
-      return { command: process.execPath, baseArgs: [candidate] };
+      return { command: resolveNodeCommand(), baseArgs: [candidate] };
     }
   }
 
   return { command: "retentia", baseArgs: [] };
+}
+
+function resolveNodeCommand(): string {
+  // Prefer user/runtime Node over VS Code's embedded Node to avoid native ABI mismatches.
+  return "node";
 }
 
 function getAutoDetectCandidates(workspaceRoot: string): string[] {
@@ -895,7 +937,7 @@ function getAutoDetectCandidates(workspaceRoot: string): string[] {
     join(workspaceRoot, "..", "..", "retentia", "dist", "cli.js"),
     join(workspaceRoot, "codex-mem", "dist", "cli.js"),
     join(workspaceRoot, "..", "codex-mem", "dist", "cli.js"),
-    join(workspaceRoot, "..", "..", "codex-mem", "dist", "cli.js")
+    join(workspaceRoot, "..", "..", "codex-mem", "dist", "cli.js"),
   ];
 
   return [...new Set(candidates)];
@@ -910,18 +952,21 @@ function fileExists(path: string): boolean {
   }
 }
 
-async function openJsonDocument(payload: unknown, title: string): Promise<void> {
+async function openJsonDocument(
+  payload: unknown,
+  title: string,
+): Promise<void> {
   await openTextDocument(JSON.stringify(payload, null, 2), "json", title);
 }
 
 async function openTextDocument(
   content: string,
   language: string,
-  _title: string
+  _title: string,
 ): Promise<void> {
   const document = await vscode.workspace.openTextDocument({
     language,
-    content
+    content,
   });
 
   await vscode.window.showTextDocument(document, { preview: false });
@@ -936,18 +981,34 @@ async function renderDashboardPanel(panel: vscode.WebviewPanel): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     OUTPUT.appendLine(`Dashboard render failed: ${message}`);
-    panel.webview.html = getDashboardHtml(createEmptyDashboardData(message), false);
+    panel.webview.html = getDashboardHtml(
+      createEmptyDashboardData(message),
+      false,
+    );
   }
 }
 
 async function collectDashboardData(): Promise<DashboardData> {
   const ingestion = await syncTaskExecutions({ force: false });
-  const [statusPayload, recentPayload, executionPayload, dbQueryPayload, ioTracePayload] = await Promise.all([
-    runCliJson(["kpis"]),
-    runCliJson(["search", "--limit", "8"]),
-    runCliJson(["execution-report", "--limit", String(getExecutionReportLimit())]),
-    runCliJson(["list-entries", "--limit", "200"]),
-    runCliJson(["io-trace", "--source", "mcp", "--limit", "200"])
+  const mcp = readMcpStatus();
+  const dashboardDataFileArgs = getMcpDataFileArgs(mcp.args);
+  const [
+    statusPayload,
+    recentPayload,
+    executionPayload,
+    dbQueryPayload,
+    ioTracePayload,
+  ] = await Promise.all([
+    runCliJson(["kpis", ...dashboardDataFileArgs]),
+    runCliJson(["search", "--limit", "8", ...dashboardDataFileArgs]),
+    runCliJson([
+      "execution-report",
+      "--limit",
+      String(getExecutionReportLimit()),
+      ...dashboardDataFileArgs,
+    ]),
+    runCliJson(["list-entries", "--limit", "200", ...dashboardDataFileArgs]),
+    runCliJson(["io-trace", "--limit", "200", ...dashboardDataFileArgs]),
   ]);
 
   const statusRoot = toRecord(statusPayload);
@@ -957,8 +1018,9 @@ async function collectDashboardData(): Promise<DashboardData> {
   const executionRoot = toRecord(executionPayload);
   const dbRoot = toRecord(dbQueryPayload);
   const ioRoot = toRecord(ioTracePayload);
-  const mcp = readMcpStatus();
-  const recentSource = Array.isArray(recentRoot.results) ? recentRoot.results : [];
+  const recentSource = Array.isArray(recentRoot.results)
+    ? recentRoot.results
+    : [];
   const dbEntries = mapDbEntries(dbRoot.entries);
   const ioEvents = mapIoTraceEvents(ioRoot.events);
 
@@ -969,7 +1031,7 @@ async function collectDashboardData(): Promise<DashboardData> {
       kind: toText(item.kind) || "unknown",
       title: toText(item.title) || "(no title)",
       excerpt: toText(item.excerpt) || "",
-      createdAt: toText(item.createdAt) || ""
+      createdAt: toText(item.createdAt) || "",
     }))
     .filter((item) => Boolean(item.createdAt || item.title));
 
@@ -986,7 +1048,7 @@ async function collectDashboardData(): Promise<DashboardData> {
       uptimeSeconds: toNumber(worker.uptimeSeconds),
       baseUrl: toText(worker.baseUrl) || "n/a",
       host: toText(worker.host) || "n/a",
-      port: toNumber(worker.port)
+      port: toNumber(worker.port),
     },
     mcp,
     kpis: {
@@ -995,14 +1057,52 @@ async function collectDashboardData(): Promise<DashboardData> {
       summariesTotal: toNumber(kpis.summariesTotal) ?? 0,
       projectsTotal: toNumber(kpis.projectsTotal) ?? 0,
       latestEntryAt: toText(kpis.latestEntryAt),
-      oldestEntryAt: toText(kpis.oldestEntryAt)
+      oldestEntryAt: toText(kpis.oldestEntryAt),
     },
     ingestion,
     execution,
     db,
     io,
-    recentTasks
+    recentTasks,
   };
+}
+
+function getMcpDataFileArgs(mcpArgs: string[]): string[] {
+  const dataFile = getCliOptionValue(mcpArgs, "--data-file");
+  if (!dataFile) {
+    return [];
+  }
+
+  return ["--data-file", dataFile];
+}
+
+function getCliOptionValue(
+  args: string[],
+  optionName: string,
+): string | undefined {
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]?.trim();
+    if (!token) {
+      continue;
+    }
+
+    if (token === optionName) {
+      const next = args[index + 1]?.trim();
+      if (next && !next.startsWith("--")) {
+        return next;
+      }
+      continue;
+    }
+
+    if (token.startsWith(`${optionName}=`)) {
+      const value = token.slice(optionName.length + 1).trim();
+      if (value) {
+        return value;
+      }
+    }
+  }
+
+  return undefined;
 }
 
 function createEmptyDashboardData(error?: string): DashboardData {
@@ -1012,19 +1112,19 @@ function createEmptyDashboardData(error?: string): DashboardData {
     worker: {
       running: false,
       baseUrl: "n/a",
-      host: "n/a"
+      host: "n/a",
     },
     mcp: {
       configured: false,
       command: "n/a",
       args: [],
-      configPath: CODEX_CONFIG_PATH
+      configPath: CODEX_CONFIG_PATH,
     },
     kpis: {
       entriesTotal: 0,
       observationsTotal: 0,
       summariesTotal: 0,
-      projectsTotal: 0
+      projectsTotal: 0,
     },
     ingestion: {
       autoSyncEnabled: true,
@@ -1032,7 +1132,7 @@ function createEmptyDashboardData(error?: string): DashboardData {
       importedTasks: 0,
       skippedTasks: 0,
       failedTasks: 0,
-      byProvider: []
+      byProvider: [],
     },
     execution: {
       total: 0,
@@ -1041,7 +1141,7 @@ function createEmptyDashboardData(error?: string): DashboardData {
       agents: [],
       models: [],
       statuses: [],
-      tasks: []
+      tasks: [],
     },
     db: {
       sampleSize: 0,
@@ -1053,20 +1153,22 @@ function createEmptyDashboardData(error?: string): DashboardData {
       kindCounts: [],
       projectCounts: [],
       observationTypeCounts: [],
-      dailyCounts: []
+      dailyCounts: [],
     },
     io: {
       sampleSize: 0,
       sourceCounts: [],
       operationCounts: [],
-      latestEvents: []
+      latestEvents: [],
     },
     recentTasks: [],
-    error
+    error,
   };
 }
 
-async function syncTaskExecutions(options: { force: boolean }): Promise<TaskSyncMetrics> {
+async function syncTaskExecutions(options: {
+  force: boolean;
+}): Promise<TaskSyncMetrics> {
   const autoSyncEnabled = isAutoSyncEnabled();
   if (!options.force && !autoSyncEnabled) {
     return {
@@ -1075,7 +1177,7 @@ async function syncTaskExecutions(options: { force: boolean }): Promise<TaskSync
       importedTasks: 0,
       skippedTasks: 0,
       failedTasks: 0,
-      byProvider: []
+      byProvider: [],
     };
   }
 
@@ -1119,7 +1221,7 @@ async function syncTaskExecutions(options: { force: boolean }): Promise<TaskSync
     skippedTasks: toNumber(result.skippedTasks) ?? 0,
     failedTasks: toNumber(result.failedTasks) ?? 0,
     newestTaskAt: toText(result.newestTaskAt),
-    byProvider: mapProviderSyncList(result.byProvider)
+    byProvider: mapProviderSyncList(result.byProvider),
   };
 }
 
@@ -1169,10 +1271,12 @@ function getEnabledProviders(): string[] {
   }
 
   const allowed = new Set(["codex", "claude", "qwen", "gwen", "all"]);
-  const normalized = [...new Set(configured.map((item) => item.toLowerCase().trim()))].filter(
-    (item) => allowed.has(item)
-  );
-  return normalized.length > 0 ? normalized : ["codex", "claude", "qwen", "gwen"];
+  const normalized = [
+    ...new Set(configured.map((item) => item.toLowerCase().trim())),
+  ].filter((item) => allowed.has(item));
+  return normalized.length > 0
+    ? normalized
+    : ["codex", "claude", "qwen", "gwen"];
 }
 
 function getPathSetting(key: string): string | undefined {
@@ -1205,7 +1309,7 @@ function mapProviderSyncList(value: unknown): TaskSyncMetrics["byProvider"] {
       detected: toNumber(item.detected) ?? 0,
       imported: toNumber(item.imported) ?? 0,
       skipped: toNumber(item.skipped) ?? 0,
-      failed: toNumber(item.failed) ?? 0
+      failed: toNumber(item.failed) ?? 0,
     }));
 }
 
@@ -1217,11 +1321,13 @@ function mapExecutionReport(root: JsonResult): DashboardData["execution"] {
     agents: mapExecutionCounts(root.agents),
     models: mapExecutionCounts(root.models),
     statuses: mapExecutionCounts(root.statuses),
-    tasks: mapExecutionTasks(root.tasks)
+    tasks: mapExecutionTasks(root.tasks),
   };
 }
 
-function mapExecutionProjects(value: unknown): DashboardData["execution"]["projects"] {
+function mapExecutionProjects(
+  value: unknown,
+): DashboardData["execution"]["projects"] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -1236,11 +1342,13 @@ function mapExecutionProjects(value: unknown): DashboardData["execution"]["proje
       providers: mapStringList(item.providers),
       agents: mapStringList(item.agents),
       models: mapStringList(item.models),
-      latestAt: toText(item.latestAt)
+      latestAt: toText(item.latestAt),
     }));
 }
 
-function mapExecutionCounts(value: unknown): Array<{ key: string; count: number }> {
+function mapExecutionCounts(
+  value: unknown,
+): Array<{ key: string; count: number }> {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -1249,11 +1357,13 @@ function mapExecutionCounts(value: unknown): Array<{ key: string; count: number 
     .map((item) => toRecord(item))
     .map((item) => ({
       key: toText(item.key) || "unknown",
-      count: toNumber(item.count) ?? 0
+      count: toNumber(item.count) ?? 0,
     }));
 }
 
-function mapExecutionTasks(value: unknown): DashboardData["execution"]["tasks"] {
+function mapExecutionTasks(
+  value: unknown,
+): DashboardData["execution"]["tasks"] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -1276,7 +1386,7 @@ function mapExecutionTasks(value: unknown): DashboardData["execution"]["tasks"] 
       status: toText(item.status) || "unknown",
       taskId: toText(item.taskId),
       sourceFile: toText(item.sourceFile),
-      tags: mapStringList(item.tags)
+      tags: mapStringList(item.tags),
     }));
 }
 
@@ -1290,7 +1400,9 @@ function mapDbEntries(value: unknown): DashboardDbEntry[] {
     .map((item) => {
       const kind = toText(item.kind) || "unknown";
       const observationType =
-        kind === "observation" ? toText(item.observationType) || "note" : "summary";
+        kind === "observation"
+          ? toText(item.observationType) || "note"
+          : "summary";
       const tags = mapStringList(item.tags);
       const title = resolveDbEntryTitle(item, kind);
 
@@ -1301,7 +1413,7 @@ function mapDbEntries(value: unknown): DashboardDbEntry[] {
         createdAt: toText(item.createdAt) || "",
         title,
         observationType,
-        tagsCount: tags.length
+        tagsCount: tags.length,
       };
     });
 }
@@ -1310,7 +1422,7 @@ function resolveDbEntryTitle(item: JsonResult, kind: string): string {
   if (kind === "observation") {
     return clipText(
       toText(item.title) || toText(item.content) || "(untitled observation)",
-      120
+      120,
     );
   }
 
@@ -1319,7 +1431,7 @@ function resolveDbEntryTitle(item: JsonResult, kind: string): string {
       toText(item.completed) ||
       toText(item.request) ||
       "(untitled summary)",
-    120
+    120,
   );
 }
 
@@ -1334,9 +1446,12 @@ function buildDbInsights(entries: DashboardDbEntry[]): DashboardData["db"] {
   }, 0);
 
   const totalTags = entries.reduce((sum, entry) => sum + entry.tagsCount, 0);
-  const avgTagsPerEntry = entries.length > 0 ? roundToOneDecimal(totalTags / entries.length) : 0;
+  const avgTagsPerEntry =
+    entries.length > 0 ? roundToOneDecimal(totalTags / entries.length) : 0;
   const activeProjects = new Set(entries.map((entry) => entry.project)).size;
-  const summaryCount = entries.filter((entry) => entry.kind === "summary").length;
+  const summaryCount = entries.filter(
+    (entry) => entry.kind === "summary",
+  ).length;
   const summaryRatio =
     entries.length > 0 ? Math.round((summaryCount / entries.length) * 100) : 0;
 
@@ -1347,13 +1462,19 @@ function buildDbInsights(entries: DashboardDbEntry[]): DashboardData["db"] {
     avgTagsPerEntry,
     summaryRatio,
     latestEntries: entries.slice(0, 20),
-    kindCounts: sortCountMapToList(countBy(entries, (entry) => entry.kind), 8),
-    projectCounts: sortCountMapToList(countBy(entries, (entry) => entry.project), 8),
+    kindCounts: sortCountMapToList(
+      countBy(entries, (entry) => entry.kind),
+      8,
+    ),
+    projectCounts: sortCountMapToList(
+      countBy(entries, (entry) => entry.project),
+      8,
+    ),
     observationTypeCounts: sortCountMapToList(
       countBy(entries, (entry) => entry.observationType),
-      8
+      8,
     ),
-    dailyCounts: buildDailyCounts(entries, 7)
+    dailyCounts: buildDailyCounts(entries, 7),
   };
 }
 
@@ -1370,20 +1491,29 @@ function mapIoTraceEvents(value: unknown): DashboardIoTraceEvent[] {
       source: toText(item.source) || "unknown",
       op: toText(item.op) || "unknown",
       req: clipText(toText(item.req) || "{}", 400),
-      res: clipText(toText(item.res) || "{}", 400)
+      res: clipText(toText(item.res) || "{}", 400),
     }));
 }
 
 function buildIoInsights(events: DashboardIoTraceEvent[]): DashboardData["io"] {
   return {
     sampleSize: events.length,
-    sourceCounts: sortCountMapToList(countBy(events, (event) => event.source), 8),
-    operationCounts: sortCountMapToList(countBy(events, (event) => event.op), 12),
-    latestEvents: events.slice(0, 20)
+    sourceCounts: sortCountMapToList(
+      countBy(events, (event) => event.source),
+      8,
+    ),
+    operationCounts: sortCountMapToList(
+      countBy(events, (event) => event.op),
+      12,
+    ),
+    latestEvents: events.slice(0, 20),
   };
 }
 
-function countBy<T>(items: T[], getKey: (item: T) => string): Map<string, number> {
+function countBy<T>(
+  items: T[],
+  getKey: (item: T) => string,
+): Map<string, number> {
   const counts = new Map<string, number>();
   for (const item of items) {
     const key = getKey(item).trim() || "unknown";
@@ -1394,7 +1524,7 @@ function countBy<T>(items: T[], getKey: (item: T) => string): Map<string, number
 
 function sortCountMapToList(
   counts: Map<string, number>,
-  limit: number
+  limit: number,
 ): Array<{ key: string; count: number }> {
   return [...counts.entries()]
     .map(([key, count]) => ({ key, count }))
@@ -1409,7 +1539,7 @@ function sortCountMapToList(
 
 function buildDailyCounts(
   entries: DashboardDbEntry[],
-  days: number
+  days: number,
 ): Array<{ key: string; count: number }> {
   const byDay = new Map<string, number>();
   for (const entry of entries) {
@@ -1427,10 +1557,13 @@ function buildDailyCounts(
     day.setHours(0, 0, 0, 0);
     day.setDate(day.getDate() - index);
     const iso = day.toISOString().slice(0, 10);
-    const label = day.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const label = day.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
     output.push({
       key: label,
-      count: byDay.get(iso) || 0
+      count: byDay.get(iso) || 0,
     });
   }
 
@@ -1463,7 +1596,7 @@ function readMcpStatus(): DashboardData["mcp"] {
     configured: false,
     command: "n/a",
     args: [],
-    configPath: CODEX_CONFIG_PATH
+    configPath: CODEX_CONFIG_PATH,
   };
 
   try {
@@ -1485,7 +1618,7 @@ function readMcpStatus(): DashboardData["mcp"] {
 
       if (trimmed.startsWith("[")) {
         const inKnownSection = MCP_SERVER_SECTIONS.some(
-          (section) => trimmed === `[${section}]`
+          (section) => trimmed === `[${section}]`,
         );
         if (inKnownSection) {
           inSection = true;
@@ -1525,7 +1658,7 @@ function readMcpStatus(): DashboardData["mcp"] {
       configured: true,
       command: command || "n/a",
       args,
-      configPath: CODEX_CONFIG_PATH
+      configPath: CODEX_CONFIG_PATH,
     };
   } catch {
     return fallback;
@@ -1874,7 +2007,7 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
                 <td>${item.skipped}</td>
                 <td>${item.failed}</td>
               </tr>
-            `
+            `,
           )
           .join("")
       : `<tr><td colspan="5" class="muted">No provider data yet.</td></tr>`;
@@ -1891,7 +2024,7 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
                 <td>${escapeHtml(project.providers.slice(0, 3).join(", ") || "n/a")}</td>
                 <td>${escapeHtml(formatIso(project.latestAt))}</td>
               </tr>
-            `
+            `,
           )
           .join("")
       : `<tr><td colspan="6" class="muted">No project execution data yet.</td></tr>`;
@@ -1901,7 +2034,10 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
   const statusBars = renderBars(data.execution.statuses, "status");
   const dbKindBars = renderBars(data.db.kindCounts, "entry kind");
   const dbProjectBars = renderBars(data.db.projectCounts, "project");
-  const dbTypeBars = renderBars(data.db.observationTypeCounts, "observation type");
+  const dbTypeBars = renderBars(
+    data.db.observationTypeCounts,
+    "observation type",
+  );
   const dbDailyBars = renderBars(data.db.dailyCounts, "day");
   const ioOpBars = renderBars(data.io.operationCounts, "operation");
   const ioSourceBars = renderBars(data.io.sourceCounts, "source");
@@ -1919,7 +2055,7 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
                 <td>${entry.tagsCount}</td>
                 <td title="${escapeHtml(entry.title)}">${escapeHtml(entry.title)}</td>
               </tr>
-            `
+            `,
           )
           .join("")
       : `<tr><td colspan="7" class="muted">No DB entries found yet.</td></tr>`;
@@ -1936,7 +2072,7 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
                 <td title="${escapeHtml(event.req)}"><code>${escapeHtml(event.req)}</code></td>
                 <td title="${escapeHtml(event.res)}"><code>${escapeHtml(event.res)}</code></td>
               </tr>
-            `
+            `,
           )
           .join("")
       : `<tr><td colspan="6" class="muted">No MCP I/O events yet.</td></tr>`;
@@ -2653,7 +2789,7 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
 
 function renderBars(
   items: Array<{ key: string; count: number }>,
-  label: string
+  label: string,
 ): string {
   if (items.length === 0) {
     return `<div class="muted">No ${escapeHtml(label)} data</div>`;
