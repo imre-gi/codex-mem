@@ -1,4 +1,11 @@
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+} from "node:fs";
 import { join, isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
@@ -38,6 +45,16 @@ interface DashboardIoTraceEvent {
   op: string;
   req: string;
   res: string;
+}
+
+interface LiveAgentSnapshot {
+  id: string;
+  nickname: string;
+  role: string;
+  status: "active" | "completed";
+  lastSeenAt: string;
+  source: string;
+  sessionFile: string;
 }
 
 interface DashboardData {
@@ -133,6 +150,7 @@ interface DashboardData {
     operationCounts: Array<{ key: string; count: number }>;
     latestEvents: DashboardIoTraceEvent[];
   };
+  liveAgents: LiveAgentSnapshot[];
   recentTasks: DashboardTask[];
   error?: string;
 }
@@ -191,8 +209,8 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.setup", async () => {
       await runAndShowJson(
-        ["setup"],
-        "Retentia setup complete. MCP enabled and worker started.",
+        ["install", "--client", "codex"],
+        "Retentia setup complete. MCP is available for Codex.",
       );
       await sidebarProvider.refreshStatus();
     }),
@@ -200,7 +218,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.enableMcp", async () => {
-      await runAndShowJson(["enable"], "Retentia MCP registration completed.");
+      await runAndShowJson(
+        ["install", "--client", "codex"],
+        "Retentia MCP registration completed.",
+      );
     }),
   );
 
@@ -492,7 +513,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const picks = results.map((item) => {
         const id = typeof item.id === "number" ? item.id : "?";
         const title = String(item.title ?? "(no title)");
-        const detail = String(item.excerpt ?? "");
+        const detail = String(item.snippet ?? item.excerpt ?? "");
         return {
           label: `#${id} ${title}`,
           description: String(item.kind ?? ""),
@@ -511,7 +532,13 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      const entryResult = await runCliJson(["get", "--ids", String(picked.id)]);
+      const entryResult = await runCliJson([
+        "search",
+        "--limit",
+        "1",
+        "--query",
+        picked.label,
+      ]);
       await openJsonDocument(entryResult, `retentia-entry-${picked.id}.json`);
     }),
   );
@@ -527,7 +554,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      const args = ["context", "--full-count", "3"];
+      const args = ["context", "--mode", "brief", "--max-chars", "1800"];
       if (query.trim()) {
         args.push("--query", query.trim());
       }
@@ -582,18 +609,18 @@ class QuickInputSidebarProvider implements vscode.WebviewViewProvider {
     }
 
     try {
-      const payload = toRecord(await runCliJson(["kpis"]));
-      const worker = toRecord(payload.worker);
-      const kpis = toRecord(payload.kpis);
+      const payload = toRecord(
+        await runCliJson(["dashboard", "--limit", "20"]),
+      );
+      const totals = toRecord(payload.totals);
       this.view.webview.postMessage({
         command: "status",
         payload: {
-          workerRunning: toBoolean(worker.running),
-          entriesTotal: toNumber(kpis.entriesTotal) ?? 0,
-          projectsTotal: toNumber(kpis.projectsTotal) ?? 0,
-          dataFile:
-            toText(payload.dataFile) || toText(worker.dataFile) || "n/a",
-          workerBaseUrl: toText(worker.baseUrl) || "n/a",
+          workerRunning: true,
+          entriesTotal: toNumber(totals.memories) ?? 0,
+          projectsTotal: toNumber(totals.projects) ?? 0,
+          dataFile: toText(payload.dataFile) || "n/a",
+          workerBaseUrl: "direct SQLite",
           updatedAt: new Date().toISOString(),
         },
       });
@@ -753,16 +780,23 @@ function buildObservationArgs(input: {
   files?: string;
 }): string[] {
   const normalizedType = (input.type || "note").trim().toLowerCase();
-  const type = OBSERVATION_TYPES.has(normalizedType) ? normalizedType : "note";
+  const kind =
+    normalizedType === "decision"
+      ? "decision"
+      : normalizedType === "discovery"
+        ? "fact"
+        : normalizedType === "bugfix"
+          ? "procedure"
+          : "episode";
 
   const args = [
-    "add-observation",
+    "memory",
+    "--kind",
+    kind,
     "--title",
     input.title.trim(),
-    "--content",
+    "--body",
     input.content.trim(),
-    "--type",
-    type,
   ];
 
   const project = input.project?.trim() || getDefaultProject();
@@ -774,8 +808,15 @@ function buildObservationArgs(input: {
     args.push("--tags", input.tags.trim());
   }
 
-  if (input.files?.trim()) {
-    args.push("--files", input.files.trim());
+  const tags = [
+    input.tags?.trim(),
+    normalizedType ? `type:${normalizedType}` : "",
+    input.files?.trim() ? `files:${input.files.trim()}` : "",
+  ]
+    .filter(Boolean)
+    .join(",");
+  if (tags) {
+    args.push("--tags", tags);
   }
 
   return args;
@@ -789,20 +830,28 @@ function buildSummaryArgs(input: {
   tags?: string;
   project?: string;
 }): string[] {
-  const args = ["add-summary", "--learned", input.learned.trim()];
+  const body = [
+    input.request?.trim() ? `Request: ${input.request.trim()}` : "",
+    `Learned: ${input.learned.trim()}`,
+    input.completed?.trim() ? `Completed: ${input.completed.trim()}` : "",
+    input.nextSteps?.trim() ? `Next steps: ${input.nextSteps.trim()}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const title = input.request?.trim() || input.learned.trim().slice(0, 90);
+  const args = [
+    "memory",
+    "--kind",
+    "episode",
+    "--title",
+    title,
+    "--body",
+    body,
+  ];
   const project = input.project?.trim() || getDefaultProject();
 
   if (project) {
     args.push("--project", project);
-  }
-  if (input.request?.trim()) {
-    args.push("--request", input.request.trim());
-  }
-  if (input.completed?.trim()) {
-    args.push("--completed", input.completed.trim());
-  }
-  if (input.nextSteps?.trim()) {
-    args.push("--next-steps", input.nextSteps.trim());
   }
   if (input.tags?.trim()) {
     args.push("--tags", input.tags.trim());
@@ -973,23 +1022,580 @@ async function openTextDocument(
 }
 
 async function renderDashboardPanel(panel: vscode.WebviewPanel): Promise<void> {
-  panel.webview.html = getDashboardHtml(createEmptyDashboardData(), true);
+  panel.webview.html = getAgentDashboardHtml(
+    createEmptyAgentDashboardData(),
+    true,
+  );
 
   try {
-    const data = await collectDashboardData();
-    panel.webview.html = getDashboardHtml(data, false);
+    const data = await collectAgentDashboardData();
+    panel.webview.html = getAgentDashboardHtml(data, false);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     OUTPUT.appendLine(`Dashboard render failed: ${message}`);
-    panel.webview.html = getDashboardHtml(
-      createEmptyDashboardData(message),
+    panel.webview.html = getAgentDashboardHtml(
+      createEmptyAgentDashboardData(message),
       false,
     );
   }
 }
 
+async function collectAgentDashboardData(): Promise<JsonResult> {
+  const result = toRecord(
+    await runCliJson([
+      "dashboard",
+      "--limit",
+      String(getExecutionReportLimit()),
+    ]),
+  );
+
+  return {
+    ...result,
+    liveAgents: collectLiveCodexAgents(),
+  };
+}
+
+function createEmptyAgentDashboardData(error?: string): JsonResult {
+  return {
+    generatedAt: new Date().toISOString(),
+    dataFile: "n/a",
+    totals: {
+      events: 0,
+      memories: 0,
+      graphEdges: 0,
+      agents: 0,
+      tasks: 0,
+      projects: 0,
+    },
+    agents: [],
+    tasks: [],
+    memories: [],
+    edges: [],
+    recentEvents: [],
+    contextPreview: { text: "", usedChars: 0, maxChars: 0, memoryIds: [] },
+    liveAgents: [],
+    error,
+  };
+}
+
+function collectLiveCodexAgents(limit = 8): LiveAgentSnapshot[] {
+  const root =
+    getPathSetting("codexSessionsPath") ||
+    join(homedir(), ".codex", "sessions");
+
+  if (!existsSync(root)) {
+    return [];
+  }
+
+  const sessionFiles = collectRecentCodexSessionFiles(root, 40);
+  const agents: LiveAgentSnapshot[] = [];
+
+  for (const sessionFile of sessionFiles) {
+    const snapshot = readLiveAgentSnapshot(sessionFile);
+    if (snapshot) {
+      agents.push(snapshot);
+    }
+  }
+
+  return agents
+    .sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt))
+    .slice(0, limit);
+}
+
+function collectRecentCodexSessionFiles(
+  root: string,
+  limit: number,
+): string[] {
+  const years = listDirectoriesDescending(root).slice(0, 2);
+  const files: Array<{ path: string; mtimeMs: number }> = [];
+
+  for (const year of years) {
+    const yearPath = join(root, year);
+    const months = listDirectoriesDescending(yearPath).slice(0, 3);
+
+    for (const month of months) {
+      const monthPath = join(yearPath, month);
+      const days = listDirectoriesDescending(monthPath).slice(0, 6);
+
+      for (const day of days) {
+        const dayPath = join(monthPath, day);
+        const entries = readdirSync(dayPath, { withFileTypes: true })
+          .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+          .map((entry) => {
+            const path = join(dayPath, entry.name);
+            return {
+              path,
+              mtimeMs: statSync(path).mtimeMs,
+            };
+          });
+
+        files.push(...entries);
+      }
+    }
+  }
+
+  return files
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .slice(0, limit)
+    .map((item) => item.path);
+}
+
+function listDirectoriesDescending(root: string): string[] {
+  if (!existsSync(root)) {
+    return [];
+  }
+
+  return readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((left, right) => right.localeCompare(left));
+}
+
+function readLiveAgentSnapshot(
+  sessionFile: string,
+): LiveAgentSnapshot | undefined {
+  try {
+    const lines = readFileSync(sessionFile, "utf8")
+      .split(/\r?\n/)
+      .filter(Boolean);
+
+    if (lines.length === 0) {
+      return undefined;
+    }
+
+    const firstRecord = toRecord(parseJsonLine(lines[0]));
+    const meta = toRecord(firstRecord.payload);
+    const threadSource = toText(meta.thread_source);
+    if (threadSource !== "subagent") {
+      return undefined;
+    }
+
+    const source = toRecord(meta.source);
+    const subagent = toRecord(source.subagent);
+    const threadSpawn = toRecord(subagent.thread_spawn);
+    const nickname =
+      toText(meta.agent_nickname) ||
+      toText(threadSpawn.agent_nickname) ||
+      toText(meta.id);
+    if (!nickname) {
+      return undefined;
+    }
+
+    const role =
+      toText(meta.agent_role) || toText(threadSpawn.agent_role) || "subagent";
+    let lastSeenAt = toText(firstRecord.timestamp) || new Date().toISOString();
+    let status: LiveAgentSnapshot["status"] = "active";
+
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const record = toRecord(parseJsonLine(lines[index]));
+      const timestamp = toText(record.timestamp);
+      if (timestamp && !lastSeenAt) {
+        lastSeenAt = timestamp;
+      } else if (timestamp) {
+        lastSeenAt = timestamp;
+      }
+
+      const eventPayload = toRecord(record.payload);
+      const eventType = toText(eventPayload.type);
+      if (eventType === "task_complete") {
+        status = "completed";
+        break;
+      }
+    }
+
+    return {
+      id: toText(meta.id) || nickname,
+      nickname,
+      role,
+      status,
+      lastSeenAt,
+      source: "codex-session",
+      sessionFile,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function parseJsonLine(line: string): JsonResult {
+  try {
+    return JSON.parse(line) as JsonResult;
+  } catch {
+    return {};
+  }
+}
+
+function normalizeLiveAgentStatus(status: LiveAgentSnapshot["status"]): string {
+  return status === "completed" ? "completed" : "active";
+}
+
+function renderLiveAgentCards(liveAgents: LiveAgentSnapshot[]): string {
+  if (liveAgents.length === 0) {
+    return `<div class="muted">No named Codex subagents found in recent session logs.</div>`;
+  }
+
+  return liveAgents
+    .map((agent) => {
+      const statusClass =
+        agent.status === "completed" ? "status-complete" : "status-active";
+      return `
+        <article class="live-agent-card">
+          <div class="live-agent-top">
+            <div>
+              <div class="live-agent-name">${escapeHtml(agent.nickname)}</div>
+              <div class="live-agent-role">${escapeHtml(agent.role)}</div>
+            </div>
+            <span class="live-agent-pill ${statusClass}">${escapeHtml(
+              normalizeLiveAgentStatus(agent.status),
+            )}</span>
+          </div>
+          <div class="live-agent-meta">${escapeHtml(
+            formatIsoCompact(agent.lastSeenAt),
+          )}</div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderLiveAgentSwarm(liveAgents: LiveAgentSnapshot[]): string {
+  if (liveAgents.length === 0) {
+    return `<div class="muted" style="padding:16px;">No named subagents available from recent Codex sessions.</div>`;
+  }
+
+  const positions = [
+    { x: 18, y: 24 },
+    { x: 52, y: 14 },
+    { x: 82, y: 26 },
+    { x: 28, y: 56 },
+    { x: 68, y: 56 },
+    { x: 20, y: 82 },
+    { x: 52, y: 78 },
+    { x: 84, y: 82 },
+  ];
+
+  const nodes = liveAgents.slice(0, positions.length);
+  const lines = nodes
+    .map((agent, index) => {
+      const position = positions[index];
+      if (!position) {
+        return "";
+      }
+
+      return `<line x1="50" y1="50" x2="${position.x}" y2="${position.y}" stroke="oklch(0.56 0.05 248)" stroke-width="1.4" stroke-dasharray="3 5" />`;
+    })
+    .join("");
+
+  const labels = nodes
+    .map((agent, index) => {
+      const position = positions[index];
+      if (!position) {
+        return "";
+      }
+
+      const fill =
+        agent.status === "completed"
+          ? "oklch(0.74 0.14 150)"
+          : "oklch(0.72 0.14 235)";
+
+      return `
+        <g>
+          <circle cx="${position.x}" cy="${position.y}" r="12" fill="${fill}" />
+          <text x="${position.x + 18}" y="${position.y - 2}" fill="oklch(0.96 0.01 248)" font-size="12" font-weight="700">${escapeHtml(
+            clipLabel(agent.nickname, 20),
+          )}</text>
+          <text x="${position.x + 18}" y="${position.y + 13}" fill="oklch(0.76 0.018 248)" font-size="10">${escapeHtml(
+            agent.role,
+          )}</text>
+        </g>
+      `;
+    })
+    .join("");
+
+  return `<svg viewBox="0 0 920 420" role="img" aria-label="Named Codex subagent swarm"><circle cx="50" cy="50" r="20" fill="oklch(0.82 0.16 105)" />${lines}${labels}<text x="77" y="54" fill="oklch(0.98 0.01 248)" font-size="13" font-weight="700">Codex swarm</text></svg>`;
+}
+
+function getAgentDashboardHtml(data: JsonResult, loading: boolean): string {
+  const nonce = String(Date.now());
+  const totals = toRecord(data.totals);
+  const agents = arrayOfRecords(data.agents);
+  const liveAgentRecords = arrayOfRecords(data.liveAgents).map((agent) => {
+    const status = toText(agent.status) || "active";
+    return {
+      id: toText(agent.nickname) || toText(agent.id) || "unknown",
+      source: toText(agent.source) || "codex-session",
+      role: toText(agent.role) || "subagent",
+      activeTasks: status === "completed" ? 0 : 1,
+      completedTasks: status === "completed" ? 1 : 0,
+      failedTasks: 0,
+      lastSeenAt: toText(agent.lastSeenAt) || "",
+    };
+  });
+  const displayAgents = liveAgentRecords.length ? liveAgentRecords : agents;
+  const tasks = arrayOfRecords(data.tasks);
+  const memories = arrayOfRecords(data.memories);
+  const edges = arrayOfRecords(data.edges);
+  const events = arrayOfRecords(data.recentEvents);
+  const contextPreview = toRecord(data.contextPreview);
+  const graphNodes = buildGraphNodes(displayAgents, tasks, memories);
+  const error = toText(data.error);
+
+  const agentRows = displayAgents.length
+    ? displayAgents
+        .map(
+          (agent) => `
+          <tr>
+            <td>${escapeHtml(toText(agent.id) || "unknown")}</td>
+            <td>${escapeHtml(toText(agent.source) || "n/a")}</td>
+            <td>${escapeHtml(toText(agent.role) || "primary")}</td>
+            <td>${toNumber(agent.activeTasks) ?? 0}</td>
+            <td>${toNumber(agent.completedTasks) ?? 0}</td>
+            <td>${toNumber(agent.failedTasks) ?? 0}</td>
+            <td>${escapeHtml(formatIsoCompact(toText(agent.lastSeenAt)))}</td>
+          </tr>`,
+        )
+        .join("")
+    : `<tr><td colspan="7" class="muted">No agents have reported events yet.</td></tr>`;
+  const taskRows = tasks.length
+    ? tasks
+        .map(
+          (task) => `
+          <tr>
+            <td>${escapeHtml(toText(task.status) || "active")}</td>
+            <td>${escapeHtml(toText(task.title) || toText(task.id) || "task")}</td>
+            <td>${escapeHtml(toText(task.actor) || "n/a")}</td>
+            <td>${escapeHtml(toText(task.project) || "global")}</td>
+            <td>${escapeHtml(toText(task.parentTaskId) || "root")}</td>
+            <td>${escapeHtml(formatIsoCompact(toText(task.lastSeenAt)))}</td>
+          </tr>`,
+        )
+        .join("")
+    : `<tr><td colspan="6" class="muted">No task graph yet. Emit agent_event records to light this up.</td></tr>`;
+  const memoryRows =
+    memories
+      .slice(0, 18)
+      .map(
+        (memory) => `
+    <li>
+      <strong>${escapeHtml(toText(memory.title) || "Untitled")}</strong>
+      <span>${escapeHtml(toText(memory.kind) || "memory")} / ${escapeHtml(toText(memory.project) || "global")}</span>
+    </li>`,
+      )
+      .join("") || `<li class="muted">No durable memories yet.</li>`;
+  const eventRows =
+    events
+      .slice(0, 16)
+      .map(
+        (event) => `
+    <li>
+      <strong>${escapeHtml(toText(event.type) || "event")}</strong>
+      <span>${escapeHtml(toText(event.actor) || toText(event.source) || "agent")} / ${escapeHtml(toText(event.summary) || "No summary")}</span>
+    </li>`,
+      )
+      .join("") || `<li class="muted">No event stream yet.</li>`;
+  const edgeRows =
+    edges
+      .slice(0, 18)
+      .map(
+        (edge) => `
+    <li>
+      <strong>${escapeHtml(toText(edge.fromType) || "node")}:${escapeHtml(toText(edge.fromId) || "unknown")}</strong>
+      <span>${escapeHtml(toText(edge.relation) || "relates_to")}</span>
+      <strong>${escapeHtml(toText(edge.toType) || "node")}:${escapeHtml(toText(edge.toId) || "unknown")}</strong>
+    </li>`,
+      )
+      .join("") || `<li class="muted">No graph edges yet.</li>`;
+  const graphSvg = renderAgentGraphSvg(graphNodes, edges);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Retentia Command Center</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: oklch(0.17 0.018 248);
+        --panel: oklch(0.22 0.02 248);
+        --panel2: oklch(0.26 0.022 248);
+        --line: oklch(0.38 0.03 248);
+        --text: oklch(0.94 0.008 248);
+        --muted: oklch(0.72 0.018 248);
+        --green: oklch(0.72 0.14 155);
+        --amber: oklch(0.78 0.14 80);
+        --red: oklch(0.68 0.16 35);
+        --blue: oklch(0.7 0.12 235);
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); }
+      .shell { padding: 18px; max-width: 1380px; margin: 0 auto; }
+      .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+      h1 { margin: 0; font-size: 24px; font-weight: 720; letter-spacing: 0; }
+      .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+      .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      button { border: 1px solid var(--line); background: var(--panel2); color: var(--text); border-radius: 7px; padding: 8px 10px; cursor: pointer; }
+      button:hover { border-color: var(--blue); }
+      .metrics { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 8px; margin-bottom: 12px; }
+      .metric, .panel { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; }
+      .metric { padding: 11px; }
+      .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+      .v { font-size: 24px; font-weight: 760; margin-top: 5px; }
+      .grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(340px, .8fr); gap: 10px; align-items: stretch; }
+      .overview-grid { grid-template-columns: minmax(0, 1.45fr) minmax(380px, .55fr); }
+      .panel { padding: 12px; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
+      .panel h2 { margin: 0 0 10px; font-size: 15px; }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      th, td { border-bottom: 1px solid color-mix(in oklch, var(--line), transparent 35%); padding: 7px 6px; text-align: left; vertical-align: top; }
+      th { color: var(--muted); font-weight: 600; }
+      ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 7px; }
+      li { border-bottom: 1px solid color-mix(in oklch, var(--line), transparent 45%); padding-bottom: 7px; display: grid; gap: 3px; }
+      li span, .muted { color: var(--muted); }
+      .context { white-space: pre-wrap; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; line-height: 1.45; min-height: 420px; max-height: none; flex: 1; overflow: auto; padding: 10px; background: oklch(0.19 0.018 248); border-radius: 8px; border: 1px solid var(--line); }
+      .graph { width: 100%; min-height: 420px; flex: 1; overflow: auto; padding: 8px; background: oklch(0.19 0.018 248); border-radius: 8px; border: 1px solid var(--line); }
+      .graph svg { display: block; width: 100%; min-width: 920px; height: auto; min-height: 420px; overflow: visible; }
+      .error { border: 1px solid var(--red); color: var(--red); padding: 10px; border-radius: 8px; margin-bottom: 12px; }
+      @media (max-width: 980px) { .metrics, .grid, .overview-grid { grid-template-columns: 1fr; } .top { align-items: flex-start; flex-direction: column; } .context, .graph { min-height: 320px; } .graph svg { min-width: 760px; min-height: 340px; } }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <div class="top">
+        <div><h1>Retentia Command Center</h1><div class="sub">${escapeHtml(toText(data.dataFile) || "n/a")} / ${escapeHtml(formatIso(toText(data.generatedAt)))}${loading ? " / loading" : ""}</div></div>
+        <div class="actions"><button data-command="refresh">Refresh</button><button data-command="setup">Install MCP</button></div>
+      </div>
+      ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
+      <section class="metrics">
+        ${metric("Events", toNumber(totals.events) ?? 0)}
+        ${metric("Memories", toNumber(totals.memories) ?? 0)}
+        ${metric("Edges", toNumber(totals.graphEdges) ?? 0)}
+        ${metric("Agents", toNumber(totals.agents) ?? 0)}
+        ${metric("Tasks", toNumber(totals.tasks) ?? 0)}
+        ${metric("Projects", toNumber(totals.projects) ?? 0)}
+      </section>
+      <section class="grid overview-grid">
+        <div class="panel"><h2>Agent Swarm Map</h2><div class="graph">${graphSvg}</div></div>
+        <div class="panel"><h2>Context Preview</h2><div class="context">${escapeHtml(toText(contextPreview.text) || "No context yet.")}</div></div>
+      </section>
+      <section class="grid" style="margin-top:10px;">
+        <div class="panel"><h2>Agents</h2><table><thead><tr><th>Agent</th><th>Source</th><th>Role</th><th>Active</th><th>Done</th><th>Failed</th><th>Seen</th></tr></thead><tbody>${agentRows}</tbody></table></div>
+        <div class="panel"><h2>Graph Edges</h2><ul>${edgeRows}</ul></div>
+      </section>
+      <section class="grid" style="margin-top:10px;">
+        <div class="panel"><h2>Tasks</h2><table><thead><tr><th>Status</th><th>Task</th><th>Agent</th><th>Project</th><th>Parent</th><th>Seen</th></tr></thead><tbody>${taskRows}</tbody></table></div>
+        <div class="panel"><h2>Recent Events</h2><ul>${eventRows}</ul></div>
+      </section>
+      <section class="panel" style="margin-top:10px;"><h2>Durable Memory</h2><ul>${memoryRows}</ul></section>
+    </main>
+    <script nonce="${nonce}">
+      const vscode = acquireVsCodeApi();
+      for (const button of document.querySelectorAll("button[data-command]")) {
+        button.addEventListener("click", () => vscode.postMessage({ command: button.getAttribute("data-command") }));
+      }
+    </script>
+  </body>
+</html>`;
+}
+
+function metric(label: string, value: number): string {
+  return `<div class="metric"><div class="k">${escapeHtml(label)}</div><div class="v">${value}</div></div>`;
+}
+
+function arrayOfRecords(value: unknown): JsonResult[] {
+  return Array.isArray(value) ? value.map((item) => toRecord(item)) : [];
+}
+
+function buildGraphNodes(
+  agents: JsonResult[],
+  tasks: JsonResult[],
+  memories: JsonResult[],
+): Array<{ id: string; type: string; label: string; x: number; y: number }> {
+  const nodes: Array<{
+    id: string;
+    type: string;
+    label: string;
+    x: number;
+    y: number;
+  }> = [];
+  agents.slice(0, 6).forEach((agent, index) => {
+    nodes.push({
+      id: `agent:${toText(agent.id) || index}`,
+      type: "agent",
+      label: toText(agent.id) || "agent",
+      x: 90,
+      y: 70 + index * 54,
+    });
+  });
+  tasks.slice(0, 8).forEach((task, index) => {
+    nodes.push({
+      id: `task:${toText(task.id) || index}`,
+      type: "task",
+      label: toText(task.title) || toText(task.id) || "task",
+      x: 360,
+      y: 45 + index * 48,
+    });
+  });
+  memories.slice(0, 6).forEach((memory, index) => {
+    nodes.push({
+      id: `memory:${toText(memory.id) || index}`,
+      type: "memory",
+      label: toText(memory.title) || "memory",
+      x: 650,
+      y: 70 + index * 54,
+    });
+  });
+  return nodes;
+}
+
+function renderAgentGraphSvg(
+  nodes: Array<{
+    id: string;
+    type: string;
+    label: string;
+    x: number;
+    y: number;
+  }>,
+  edges: JsonResult[],
+): string {
+  if (nodes.length === 0) {
+    return `<div class="muted" style="padding:16px;">No graph data yet. Record events and edges to inspect agent swarms.</div>`;
+  }
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const lines = edges
+    .slice(0, 80)
+    .map((edge) => {
+      const from = byId.get(`${toText(edge.fromType)}:${toText(edge.fromId)}`);
+      const to = byId.get(`${toText(edge.toType)}:${toText(edge.toId)}`);
+      if (!from || !to) {
+        return "";
+      }
+      return `<line x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" stroke="oklch(0.58 0.05 248)" stroke-width="1.5" />`;
+    })
+    .join("");
+  const circles = nodes
+    .map((node) => {
+      const fill =
+        node.type === "agent"
+          ? "oklch(0.72 0.14 155)"
+          : node.type === "task"
+            ? "oklch(0.7 0.12 235)"
+            : "oklch(0.78 0.14 80)";
+      return `<g><circle cx="${node.x}" cy="${node.y}" r="13" fill="${fill}" /><text x="${node.x + 20}" y="${node.y + 4}" fill="oklch(0.94 0.008 248)" font-size="12">${escapeHtml(clipLabel(node.label, 30))}</text></g>`;
+    })
+    .join("");
+  return `<svg viewBox="0 0 920 440" role="img" aria-label="Agent task memory graph">${lines}${circles}</svg>`;
+}
+
+function clipLabel(value: string, maxLength: number): string {
+  return value.length <= maxLength
+    ? value
+    : `${value.slice(0, maxLength - 3)}...`;
+}
+
 async function collectDashboardData(): Promise<DashboardData> {
   const ingestion = await syncTaskExecutions({ force: false });
+  const liveAgents = collectLiveCodexAgents();
   const mcp = readMcpStatus();
   const dashboardDataFileArgs = getMcpDataFileArgs(mcp.args);
   const [
@@ -1063,6 +1669,7 @@ async function collectDashboardData(): Promise<DashboardData> {
     execution,
     db,
     io,
+    liveAgents,
     recentTasks,
   };
 }
@@ -1161,6 +1768,7 @@ function createEmptyDashboardData(error?: string): DashboardData {
       operationCounts: [],
       latestEvents: [],
     },
+    liveAgents: [],
     recentTasks: [],
     error,
   };
@@ -1976,25 +2584,8 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
   const workerStateClass = data.worker.running ? "status-ok" : "status-warn";
   const mcpStateClass = data.mcp.configured ? "status-ok" : "status-warn";
   const mcpState = data.mcp.configured ? "Configured" : "Missing";
-  const recentItems =
-    data.recentTasks.length > 0
-      ? data.recentTasks
-          .map((item) => {
-            const title = escapeHtml(item.title);
-            const kind = escapeHtml(item.kind);
-            const id = item.id !== undefined ? `#${item.id}` : "n/a";
-            const createdAt = formatIso(item.createdAt);
-            const excerpt = escapeHtml(item.excerpt || "No details");
-            return `
-              <li class="task-item">
-                <div class="task-title">${title}</div>
-                <div class="task-meta">${id} · ${kind} · ${escapeHtml(createdAt)}</div>
-                <div class="task-excerpt">${excerpt}</div>
-              </li>
-            `;
-          })
-          .join("")
-      : `<li class="task-empty">No memory tasks found yet.</li>`;
+  const liveAgentCards = renderLiveAgentCards(data.liveAgents);
+  const liveAgentSwarm = renderLiveAgentSwarm(data.liveAgents);
   const providerSyncRows =
     data.ingestion.byProvider.length > 0
       ? data.ingestion.byProvider
@@ -2039,8 +2630,6 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
     "observation type",
   );
   const dbDailyBars = renderBars(data.db.dailyCounts, "day");
-  const ioOpBars = renderBars(data.io.operationCounts, "operation");
-  const ioSourceBars = renderBars(data.io.sourceCounts, "source");
   const dbLatestRows =
     data.db.latestEntries.length > 0
       ? data.db.latestEntries
@@ -2059,23 +2648,6 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
           )
           .join("")
       : `<tr><td colspan="7" class="muted">No DB entries found yet.</td></tr>`;
-  const ioLatestRows =
-    data.io.latestEvents.length > 0
-      ? data.io.latestEvents
-          .map(
-            (event) => `
-              <tr>
-                <td>${event.id}</td>
-                <td>${escapeHtml(formatIsoCompact(event.createdAt))}</td>
-                <td>${escapeHtml(event.source)}</td>
-                <td>${escapeHtml(event.op)}</td>
-                <td title="${escapeHtml(event.req)}"><code>${escapeHtml(event.req)}</code></td>
-                <td title="${escapeHtml(event.res)}"><code>${escapeHtml(event.res)}</code></td>
-              </tr>
-            `,
-          )
-          .join("")
-      : `<tr><td colspan="6" class="muted">No MCP I/O events yet.</td></tr>`;
   const taskDataJson = toScriptJson(data.execution.tasks);
 
   const errorBlock = data.error
@@ -2350,36 +2922,78 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
         font-size: 12px;
       }
 
-      .task-item {
-        border-top: 1px solid var(--line);
-        padding: 10px 0;
+      .live-agent-grid {
+        display: grid;
+        gap: 10px;
       }
 
-      .task-item:first-child {
-        border-top: 0;
-        padding-top: 0;
+      .live-agent-card {
+        border: 1px solid rgba(188, 204, 221, 0.12);
+        background: linear-gradient(180deg, rgba(29, 38, 51, 0.95), rgba(20, 27, 36, 0.92));
+        border-radius: 12px;
+        padding: 12px;
       }
 
-      .task-title {
-        font-weight: 600;
-        font-size: 13px;
+      .live-agent-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
       }
 
-      .task-meta {
+      .live-agent-name {
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+      }
+
+      .live-agent-role {
         color: var(--fg-1);
         font-size: 11px;
-        margin-top: 2px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        margin-top: 4px;
       }
 
-      .task-excerpt {
-        font-size: 12px;
-        margin-top: 6px;
-        color: #d3dfed;
+      .live-agent-pill {
+        border-radius: 999px;
+        padding: 4px 8px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-weight: 700;
       }
 
-      .task-empty {
+      .status-active {
+        background: rgba(89, 208, 137, 0.16);
+        color: #8ff0ba;
+      }
+
+      .status-complete {
+        background: rgba(46, 160, 233, 0.16);
+        color: #9cdcfe;
+      }
+
+      .live-agent-meta {
+        margin-top: 8px;
         color: var(--fg-1);
-        font-size: 12px;
+        font-size: 11px;
+      }
+
+      .swarm-map {
+        min-height: 360px;
+        overflow: auto;
+        padding: 8px;
+        background: linear-gradient(180deg, rgba(18, 26, 36, 0.96), rgba(13, 17, 23, 0.94));
+        border-radius: 10px;
+        border: 1px solid var(--line);
+      }
+
+      .swarm-map svg {
+        display: block;
+        width: 100%;
+        min-width: 760px;
+        min-height: 340px;
       }
 
       .loading {
@@ -2489,8 +3103,8 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
           <div class="value">${data.db.summaryRatio}%</div>
         </article>
         <article class="card">
-          <div class="label">LLM I/O Rows</div>
-          <div class="value">${data.io.sampleSize}</div>
+          <div class="label">Live Agents</div>
+          <div class="value">${data.liveAgents.length}</div>
         </article>
       </section>
 
@@ -2527,12 +3141,16 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
           </div>
         </article>
         <article class="panel">
-          <h3>Recent Tasks Executed</h3>
-          <ul class="tasks">${recentItems}</ul>
+          <h3>Named Codex Agents</h3>
+          <div class="live-agent-grid">${liveAgentCards}</div>
         </article>
       </section>
 
       <section class="panels" style="margin-top:12px;">
+        <article class="panel">
+          <h3>Live Codex Swarm</h3>
+          <div class="swarm-map">${liveAgentSwarm}</div>
+        </article>
         <article class="panel">
           <h3>Execution Visualizer</h3>
           <div class="subgrid">
@@ -2554,24 +3172,25 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
             </div>
           </div>
         </article>
-        <article class="panel">
-          <h3>Project Explorer</h3>
-          <div class="table-wrap">
-            <table id="projectTable">
-              <thead>
-                <tr>
-                  <th>Project</th>
-                  <th>Total</th>
-                  <th>Done</th>
-                  <th>Failed</th>
-                  <th>Providers</th>
-                  <th>Latest</th>
-                </tr>
-              </thead>
-              <tbody>${projectRows}</tbody>
-            </table>
-          </div>
-        </article>
+      </section>
+
+      <section class="panel" style="margin-top:12px;">
+        <h3>Project Explorer</h3>
+        <div class="table-wrap">
+          <table id="projectTable">
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Total</th>
+                <th>Done</th>
+                <th>Failed</th>
+                <th>Providers</th>
+                <th>Latest</th>
+              </tr>
+            </thead>
+            <tbody>${projectRows}</tbody>
+          </table>
+        </div>
       </section>
 
       <section class="panel" style="margin-top:12px;">
@@ -2593,35 +3212,6 @@ function getDashboardHtml(data: DashboardData, loading: boolean): string {
             <div class="label">Entries (Last 7 Days)</div>
             <div class="bars">${dbDailyBars}</div>
           </div>
-        </div>
-      </section>
-
-      <section class="panel" style="margin-top:12px;">
-        <h3>LLM DB I/O Trace (MCP)</h3>
-        <div class="subgrid">
-          <div>
-            <div class="label">By Operation</div>
-            <div class="bars">${ioOpBars}</div>
-          </div>
-          <div>
-            <div class="label">By Source</div>
-            <div class="bars">${ioSourceBars}</div>
-          </div>
-        </div>
-        <div class="table-wrap" style="margin-top:10px;">
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>When</th>
-                <th>Source</th>
-                <th>Op</th>
-                <th>Request (compact)</th>
-                <th>Result (compact)</th>
-              </tr>
-            </thead>
-            <tbody>${ioLatestRows}</tbody>
-          </table>
         </div>
       </section>
 

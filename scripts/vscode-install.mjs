@@ -2,10 +2,11 @@
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   statSync,
-  writeFileSync
+  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -30,7 +31,9 @@ try {
 
   installFlow();
   log("Install complete");
-  log("If commands do not appear immediately, run 'Developer: Reload Window' in VS Code.");
+  log(
+    "If VS Code commands do not appear immediately, run 'Developer: Reload Window' in VS Code.",
+  );
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   fail(message);
@@ -43,11 +46,34 @@ function installFlow() {
   log("Rebuilding native dependencies for current Node runtime");
   runNpm(["rebuild", "better-sqlite3"], ROOT_DIR);
 
-  log("Installing VS Code extension dependencies");
-  runNpm(["install"], VSCODE_EXTENSION_DIR);
-
   log("Building Retentia CLI");
   runNpm(["run", "build"], ROOT_DIR);
+
+  log("Installing Retentia MCP for Codex when available");
+  run(
+    process.execPath,
+    [join(ROOT_DIR, "dist", "cli.js"), "install", "--client", "codex"],
+    ROOT_DIR,
+    true,
+  );
+
+  log("Writing Claude Code MCP config reference");
+  writeClaudeCodeConfigReference();
+
+  const codeCli = resolveCodeCli();
+  if (!codeCli) {
+    log(
+      "VS Code CLI not found; core Retentia is installed and MCP config is ready.",
+    );
+    log(
+      codeCliResolutionHint ||
+        "Run this installer from inside VS Code, or set CODEX_MEM_VSCODE_CLI, to install the extension too.",
+    );
+    return;
+  }
+
+  log("Installing VS Code extension dependencies");
+  runNpm(["install"], VSCODE_EXTENSION_DIR);
 
   log("Packaging VS Code extension");
   runNpm(["run", "package"], VSCODE_EXTENSION_DIR);
@@ -57,27 +83,27 @@ function installFlow() {
     throw new Error(`VSIX file not found: ${vsixFile}`);
   }
 
-  const codeCli = resolveCodeCli();
-  if (!codeCli) {
-    throw new Error(
-      [
-      "VS Code CLI not found.",
-      "Install VS Code command-line integration (the 'code' command) and retry.",
-      "Or set CODEX_MEM_VSCODE_CLI to a working VS Code CLI path/command.",
-      codeCliResolutionHint,
-      `Generated VSIX: ${vsixFile}`
-    ]
-        .filter(Boolean)
-        .join("\n")
-    );
-  }
-
   log(`Using VS Code CLI: ${codeCli}`);
   uninstallKnownExtensions(codeCli);
   installExtensionEverywhere(codeCli, vsixFile);
+  log("VS Code extension installed");
+}
 
-  log("Enabling MCP and starting worker");
-  run(process.execPath, [join(ROOT_DIR, "dist", "cli.js"), "setup"], ROOT_DIR);
+function writeClaudeCodeConfigReference() {
+  const result = run(
+    process.execPath,
+    [join(ROOT_DIR, "dist", "cli.js"), "mcp-config", "--client", "claude-code"],
+    ROOT_DIR,
+    true,
+  );
+  if (result.status !== 0) {
+    log("Could not generate Claude Code MCP config reference.");
+    return;
+  }
+  const outputFile = join(homedir(), ".retentia", "claude-code-mcp.json");
+  mkdirSync(dirname(outputFile), { recursive: true });
+  writeFileSync(outputFile, result.stdout, "utf8");
+  log(`Claude Code MCP config reference: ${outputFile}`);
 }
 
 function resetEnvironment() {
@@ -95,7 +121,8 @@ function resetEnvironment() {
 
 function resetCodexConfig() {
   const configPath =
-    process.env.CODEX_MEM_CODEX_CONFIG || join(homedir(), ".codex", "config.toml");
+    process.env.CODEX_MEM_CODEX_CONFIG ||
+    join(homedir(), ".codex", "config.toml");
   if (!existsSync(configPath)) {
     return;
   }
@@ -106,7 +133,10 @@ function resetCodexConfig() {
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed === "[mcp_servers.retentia]" || trimmed === "[mcp_servers.codex-mem]") {
+    if (
+      trimmed === "[mcp_servers.retentia]" ||
+      trimmed === "[mcp_servers.codex-mem]"
+    ) {
       skip = true;
       continue;
     }
@@ -136,11 +166,18 @@ function resetVsCodeMcpConfig() {
     if (parsed && parsed.servers && typeof parsed.servers === "object") {
       for (const key of Object.keys(parsed.servers)) {
         const normalized = key.toLowerCase();
-        if (normalized.includes("retentia") || normalized.includes("codex-mem")) {
+        if (
+          normalized.includes("retentia") ||
+          normalized.includes("codex-mem")
+        ) {
           delete parsed.servers[key];
         }
       }
-      writeFileSync(mcpConfigPath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+      writeFileSync(
+        mcpConfigPath,
+        `${JSON.stringify(parsed, null, 2)}\n`,
+        "utf8",
+      );
     }
   } catch {
     log(`Could not parse VS Code MCP config: ${mcpConfigPath}`);
@@ -159,7 +196,7 @@ function uninstallKnownExtensions(codeCli) {
         codeCli,
         ["--uninstall-extension", extensionId, "--profile", profile],
         ROOT_DIR,
-        true
+        true,
       );
     }
   }
@@ -173,7 +210,7 @@ function installExtensionEverywhere(codeCli, vsixFile) {
       codeCli,
       ["--install-extension", vsixFile, "--force", "--profile", profile],
       ROOT_DIR,
-      true
+      true,
     );
 
     if (result.status !== 0) {
@@ -200,7 +237,7 @@ function listProfiles() {
     const profiles = Array.isArray(parsed?.userDataProfiles)
       ? parsed.userDataProfiles
           .map((item) =>
-            item && typeof item.name === "string" ? item.name.trim() : ""
+            item && typeof item.name === "string" ? item.name.trim() : "",
           )
           .filter(Boolean)
       : [];
@@ -211,10 +248,12 @@ function listProfiles() {
 }
 
 function resolveVsixPath() {
-  const extensionPackage = JSON.parse(readFileSync(EXTENSION_PACKAGE_JSON, "utf8"));
+  const extensionPackage = JSON.parse(
+    readFileSync(EXTENSION_PACKAGE_JSON, "utf8"),
+  );
   return join(
     VSCODE_EXTENSION_DIR,
-    `${extensionPackage.name}-${extensionPackage.version}.vsix`
+    `${extensionPackage.name}-${extensionPackage.version}.vsix`,
   );
 }
 
@@ -266,8 +305,7 @@ function ensureCodeCliUsable(candidate) {
   if (!looksLikeIpcSocketFailure(firstProbe)) {
     return {
       ok: false,
-      hint:
-        "Detected a VS Code CLI candidate, but it could not be used. Set CODEX_MEM_VSCODE_CLI to a working 'code' command/path."
+      hint: "Detected a VS Code CLI candidate, but it could not be used. Set CODEX_MEM_VSCODE_CLI to a working 'code' command/path.",
     };
   }
 
@@ -275,8 +313,7 @@ function ensureCodeCliUsable(candidate) {
   if (!sockets.length) {
     return {
       ok: false,
-      hint:
-        "Detected a VS Code remote CLI, but no active VS Code IPC socket was found. Open a VS Code remote window and retry, or set CODEX_MEM_VSCODE_CLI to a local 'code' command."
+      hint: "Detected a VS Code remote CLI, but no active VS Code IPC socket was found. Open a VS Code remote window and retry, or set CODEX_MEM_VSCODE_CLI to a local 'code' command.",
     };
   }
 
@@ -294,8 +331,7 @@ function ensureCodeCliUsable(candidate) {
 
   return {
     ok: false,
-    hint:
-      "Detected a VS Code remote CLI, but the IPC socket could not be reached. Open/reload the remote VS Code window and retry, or set CODEX_MEM_VSCODE_CLI."
+    hint: "Detected a VS Code remote CLI, but the IPC socket could not be reached. Open/reload the remote VS Code window and retry, or set CODEX_MEM_VSCODE_CLI.",
   };
 }
 
@@ -369,8 +405,8 @@ function platformCodeCandidates() {
         "Resources",
         "app",
         "bin",
-        "code"
-      )
+        "code",
+      ),
     ];
   }
 
@@ -384,7 +420,7 @@ function platformCodeCandidates() {
     return [
       join(localAppData, "Programs", "Microsoft VS Code", "bin", "code.cmd"),
       join(programFiles, "Microsoft VS Code", "bin", "code.cmd"),
-      join(programFilesX86, "Microsoft VS Code", "bin", "code.cmd")
+      join(programFilesX86, "Microsoft VS Code", "bin", "code.cmd"),
     ];
   }
 
@@ -392,7 +428,7 @@ function platformCodeCandidates() {
     "/usr/bin/code",
     "/usr/local/bin/code",
     "/snap/bin/code",
-    ...wslRemoteCodeCandidates()
+    ...wslRemoteCodeCandidates(),
   ];
 }
 
@@ -400,7 +436,7 @@ function wslRemoteCodeCandidates() {
   const candidates = [];
   const serverDirs = [
     join(homedir(), ".vscode-server", "bin"),
-    join(homedir(), ".vscode-server-insiders", "bin")
+    join(homedir(), ".vscode-server-insiders", "bin"),
   ];
 
   for (const serverDir of serverDirs) {
@@ -414,7 +450,9 @@ function wslRemoteCodeCandidates() {
         if (!entry.isDirectory()) {
           continue;
         }
-        candidates.push(join(serverDir, entry.name, "bin", "remote-cli", "code"));
+        candidates.push(
+          join(serverDir, entry.name, "bin", "remote-cli", "code"),
+        );
       }
     } catch {
       continue;
@@ -433,16 +471,24 @@ function defaultVsCodeStorageFile() {
       "Code",
       "User",
       "globalStorage",
-      "storage.json"
+      "storage.json",
     );
   }
 
   if (process.platform === "win32") {
-    const appData = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
+    const appData =
+      process.env.APPDATA || join(homedir(), "AppData", "Roaming");
     return join(appData, "Code", "User", "globalStorage", "storage.json");
   }
 
-  return join(homedir(), ".config", "Code", "User", "globalStorage", "storage.json");
+  return join(
+    homedir(),
+    ".config",
+    "Code",
+    "User",
+    "globalStorage",
+    "storage.json",
+  );
 }
 
 function defaultVsCodeMcpFile() {
@@ -453,12 +499,13 @@ function defaultVsCodeMcpFile() {
       "Application Support",
       "Code",
       "User",
-      "mcp.json"
+      "mcp.json",
     );
   }
 
   if (process.platform === "win32") {
-    const appData = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
+    const appData =
+      process.env.APPDATA || join(homedir(), "AppData", "Roaming");
     return join(appData, "Code", "User", "mcp.json");
   }
 
@@ -480,7 +527,7 @@ function run(command, args, cwd, allowFailure = false) {
     cwd,
     env: process.env,
     stdio: allowFailure ? "pipe" : "inherit",
-    encoding: "utf8"
+    encoding: "utf8",
   });
 
   if (result.status !== 0) {
@@ -492,7 +539,7 @@ function run(command, args, cwd, allowFailure = false) {
   return {
     status: result.status ?? 1,
     stdout: result.stdout || "",
-    stderr: result.stderr || ""
+    stderr: result.stderr || "",
   };
 }
 

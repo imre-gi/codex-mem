@@ -2,12 +2,11 @@
   "name": "retentia",
   "version": "0.2.0",
   "displayName": "Retentia",
-  "description": "Persistent project memory MCP plugin for OpenAI Codex, Claude Code, and other major LLMs.",
+  "description": "Personal memory, RAG, and agent graph engine for ChatGPT Codex and Claude Code.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "retentia": "dist/cli.js",
-    "codex-mem": "dist/cli.js"
+    "retentia": "dist/cli.js"
   },
   "files": [
     "dist",
@@ -18,7 +17,11 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "setup": "npm run build && node dist/cli.js setup",
-    "enable": "npm run build && node dist/cli.js enable",
+    "install:retentia": "node scripts/vscode-install.mjs install",
+    "install:mcp": "npm run build && node dist/cli.js install",
+    "migrate": "npm run build && node dist/cli.js migrate",
+    "v2:install": "npm run build && node dist/cli.js install",
+    "v2:mcp": "npm run build && node dist/cli.js mcp",
     "vscode:build": "npm --prefix vscode-extension run build",
     "vscode:package": "npm --prefix vscode-extension run package",
     "install:vscode": "node scripts/vscode-install.mjs install",
@@ -31,9 +34,8 @@
     "codex",
     "mcp",
     "memory",
-    "plugin",
+    "rag",
     "claude",
-    "qwen",
     "multi-agent"
   ],
   "author": "imre_gi",

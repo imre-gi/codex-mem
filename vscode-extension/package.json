@@ -1,7 +1,7 @@
 {
   "name": "retentia-vscode",
   "displayName": "Retentia",
-  "description": "Persistent memory commands for Retentia inside VS Code",
+  "description": "Retentia command center for memory, RAG, context budgets, and Codex/Claude Code agent visibility inside VS Code",
   "version": "0.1.1",
   "publisher": "local",
   "license": "MIT",
@@ -17,62 +17,34 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onView:codexMem.quickInput",
-    "onCommand:codexMem.setup",
-    "onCommand:codexMem.enableMcp",
-    "onCommand:codexMem.initStore",
-    "onCommand:codexMem.startWorker",
-    "onCommand:codexMem.stopWorker",
-    "onCommand:codexMem.workerStatus",
-    "onCommand:codexMem.syncCodexTasks",
-    "onCommand:codexMem.projectExplorer",
-    "onCommand:codexMem.statusDashboard",
-    "onCommand:codexMem.openSettings",
-    "onCommand:codexMem.addObservation",
-    "onCommand:codexMem.addSummary",
-    "onCommand:codexMem.search",
-    "onCommand:codexMem.contextPack",
-    "onCommand:codexMem.openMemoryFile"
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "codexMem.setup",
-        "title": "Retentia: Setup (Enable + Start Worker)"
+        "title": "Retentia: Install MCP for Codex"
       },
       {
         "command": "codexMem.enableMcp",
-        "title": "Retentia: Enable MCP"
+        "title": "Retentia: Enable MCP for Codex"
       },
       {
         "command": "codexMem.initStore",
         "title": "Retentia: Initialize Store"
       },
       {
-        "command": "codexMem.startWorker",
-        "title": "Retentia: Start Worker"
-      },
-      {
-        "command": "codexMem.stopWorker",
-        "title": "Retentia: Stop Worker"
-      },
-      {
-        "command": "codexMem.workerStatus",
-        "title": "Retentia: Worker Status"
-      },
-      {
         "command": "codexMem.syncCodexTasks",
-        "title": "Retentia: Sync LLM Tasks (Codex/Claude/Qwen/Gwen)"
+        "title": "Retentia: Import Codex and Claude Code Tasks"
       },
       {
         "command": "codexMem.projectExplorer",
-        "title": "Retentia: Project Explorer + Visualizer"
+        "title": "Retentia: Agent Command Center"
       },
       {
         "command": "codexMem.statusDashboard",
-        "title": "Retentia: Status Dashboard"
+        "title": "Retentia: Inspect Agents and Swarms"
       },
       {
         "command": "codexMem.openSettings",
@@ -80,11 +52,11 @@
       },
       {
         "command": "codexMem.addObservation",
-        "title": "Retentia: Add Observation"
+        "title": "Retentia: Add Memory"
       },
       {
         "command": "codexMem.addSummary",
-        "title": "Retentia: Add Summary"
+        "title": "Retentia: Save Session Memory"
       },
       {
         "command": "codexMem.search",
@@ -133,7 +105,7 @@
         "codexMem.autoSyncCodexTasks": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically sync task-execution events from enabled LLM providers into Retentia when refreshing the dashboard."
+          "description": "Automatically sync task-execution events from Codex and Claude Code into Retentia when refreshing the dashboard."
         },
         "codexMem.enabledProviders": {
           "type": "array",
@@ -141,19 +113,15 @@
             "type": "string",
             "enum": [
               "codex",
-              "claude",
-              "qwen",
-              "gwen",
+              "claude-code",
               "all"
             ]
           },
           "default": [
             "codex",
-            "claude",
-            "qwen",
-            "gwen"
+            "claude-code"
           ],
-          "description": "Enabled providers for task ingestion. Use 'all' to include every supported provider."
+          "description": "Enabled providers for task ingestion. Use 'all' for Codex and Claude Code."
         },
         "codexMem.autoSyncLookbackDays": {
           "type": "number",
@@ -185,16 +153,6 @@
           "type": "string",
           "default": "",
           "description": "Optional custom path to Claude Code sessions directory. Leave empty to use ~/.claude/projects."
-        },
-        "codexMem.qwenSessionsPath": {
-          "type": "string",
-          "default": "",
-          "description": "Optional custom path to Qwen sessions directory. Leave empty to use ~/.qwen/sessions."
-        },
-        "codexMem.gwenSessionsPath": {
-          "type": "string",
-          "default": "",
-          "description": "Optional custom path to Gwen sessions directory. Leave empty to use ~/.gwen/sessions."
         },
         "codexMem.executionReportLimit": {
           "type": "number",

@@ -1,0 +1,163 @@
+export type V2EventType =
+  | "message"
+  | "task_started"
+  | "task_completed"
+  | "task_failed"
+  | "tool_call"
+  | "file_change"
+  | "decision"
+  | "error"
+  | "memory_used"
+  | "observation";
+
+export type V2MemoryKind =
+  | "episode"
+  | "fact"
+  | "decision"
+  | "preference"
+  | "procedure"
+  | "constraint"
+  | "artifact"
+  | "todo";
+
+export type V2ContextMode = "ids" | "brief" | "task-primer" | "full-evidence";
+
+export interface V2EventInput {
+  type: V2EventType | string;
+  source: string;
+  actor?: string;
+  role?: string;
+  taskId?: string;
+  parentTaskId?: string;
+  project?: string;
+  summary?: string;
+  tags?: string[];
+  artifacts?: string[];
+  payload?: unknown;
+  createdAt?: string;
+}
+
+export interface V2Event extends Required<Omit<V2EventInput, "payload">> {
+  id: number;
+  payload?: unknown;
+}
+
+export interface V2MemoryInput {
+  kind: V2MemoryKind;
+  title: string;
+  body: string;
+  project?: string;
+  tags?: string[];
+  sourceEventIds?: number[];
+  confidence?: number;
+  pinned?: boolean;
+  createdAt?: string;
+}
+
+export interface V2Memory {
+  id: number;
+  kind: V2MemoryKind;
+  project: string;
+  title: string;
+  body: string;
+  tags: string[];
+  sourceEventIds: number[];
+  confidence: number;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface V2GraphEdgeInput {
+  fromType: string;
+  fromId: string;
+  toType: string;
+  toId: string;
+  relation: string;
+  weight?: number;
+  metadata?: unknown;
+  createdAt?: string;
+}
+
+export interface V2GraphEdge extends Required<
+  Omit<V2GraphEdgeInput, "metadata">
+> {
+  id: number;
+  metadata?: unknown;
+}
+
+export interface V2SearchOptions {
+  query?: string;
+  project?: string;
+  kind?: V2MemoryKind;
+  tags?: string[];
+  limit?: number;
+}
+
+export interface V2SearchResult {
+  id: number;
+  kind: V2MemoryKind;
+  project: string;
+  title: string;
+  snippet: string;
+  tags: string[];
+  confidence: number;
+  pinned: boolean;
+  score: number;
+  createdAt: string;
+}
+
+export interface V2ContextOptions extends V2SearchOptions {
+  mode?: V2ContextMode;
+  maxChars?: number;
+}
+
+export interface V2ContextPack {
+  mode: V2ContextMode;
+  maxChars: number;
+  usedChars: number;
+  truncated: boolean;
+  memoryIds: number[];
+  text: string;
+}
+
+export interface V2DashboardAgent {
+  id: string;
+  source: string;
+  role: string;
+  activeTasks: number;
+  completedTasks: number;
+  failedTasks: number;
+  lastSeenAt: string;
+}
+
+export interface V2DashboardTask {
+  id: string;
+  title: string;
+  source: string;
+  actor: string;
+  role: string;
+  status: string;
+  project: string;
+  parentTaskId: string;
+  lastSeenAt: string;
+}
+
+export interface V2DashboardData {
+  generatedAt: string;
+  dataFile: string;
+  totals: {
+    events: number;
+    memories: number;
+    graphEdges: number;
+    agents: number;
+    tasks: number;
+    projects: number;
+  };
+  agents: V2DashboardAgent[];
+  tasks: V2DashboardTask[];
+  memories: V2Memory[];
+  edges: V2GraphEdge[];
+  recentEvents: V2Event[];
+  contextPreview: V2ContextPack;
+}
