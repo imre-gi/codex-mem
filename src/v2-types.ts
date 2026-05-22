@@ -42,6 +42,12 @@ export interface V2Event extends Required<Omit<V2EventInput, "payload">> {
   payload?: unknown;
 }
 
+export interface V2ImportedEventResult {
+  event: V2Event;
+  imported: boolean;
+  externalKey: string;
+}
+
 export interface V2MemoryInput {
   kind: V2MemoryKind;
   title: string;
@@ -125,6 +131,7 @@ export interface V2DashboardAgent {
   id: string;
   source: string;
   role: string;
+  status: string;
   activeTasks: number;
   completedTasks: number;
   failedTasks: number;
@@ -134,13 +141,34 @@ export interface V2DashboardAgent {
 export interface V2DashboardTask {
   id: string;
   title: string;
+  description: string;
+  reasoning: string;
   source: string;
   actor: string;
   role: string;
   status: string;
   project: string;
   parentTaskId: string;
+  latestEventType: string;
+  eventCount: number;
   lastSeenAt: string;
+}
+
+export interface V2DashboardActivity {
+  id: number;
+  createdAt: string;
+  type: string;
+  source: string;
+  actor: string;
+  role: string;
+  taskId: string;
+  parentTaskId: string;
+  project: string;
+  summary: string;
+  reasoning: string;
+  artifacts: string[];
+  tags: string[];
+  payloadPreview: string;
 }
 
 export interface V2DashboardData {
@@ -156,6 +184,7 @@ export interface V2DashboardData {
   };
   agents: V2DashboardAgent[];
   tasks: V2DashboardTask[];
+  activities: V2DashboardActivity[];
   memories: V2Memory[];
   edges: V2GraphEdge[];
   recentEvents: V2Event[];

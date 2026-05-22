@@ -9,6 +9,7 @@ import { syncTaskExecutions, type LlmProvider } from "./task-sync.js";
 import { getV2DataFilePath } from "./v2-config.js";
 import { V2MemoryEngine } from "./v2-engine.js";
 import { startV2McpServer } from "./v2-mcp-server.js";
+import { ingestV2TaskEvents } from "./v2-task-ingest.js";
 import type { V2ContextMode, V2MemoryKind } from "./v2-types.js";
 import { startWorkerService } from "./worker-service.js";
 import { WorkerManager } from "./worker-manager.js";
@@ -53,6 +54,7 @@ const V2_TOP_LEVEL_ACTIONS = new Set([
   "edge",
   "graph",
   "dashboard",
+  "ingest",
   "migrate",
 ]);
 const V2_MEMORY_KINDS: V2MemoryKind[] = [
@@ -294,6 +296,23 @@ async function handleV2Command(
         printJson(
           engine.buildDashboard(getOptionalNumber(parsed.options.limit)),
         );
+        return;
+      }
+
+      case "ingest": {
+        const result = ingestV2TaskEvents(engine, {
+          providers: getCsvList(parsed.options.providers),
+          copilotPath: getOptionalString(parsed.options["copilot-path"]),
+          codexPath: getOptionalString(parsed.options["codex-path"]),
+          claudePath: getOptionalString(parsed.options["claude-path"]),
+          lookbackDays: getOptionalNumber(parsed.options["lookback-days"]),
+          maxFilesPerProvider: getOptionalNumber(parsed.options["max-files"]),
+          maxImport: getOptionalNumber(parsed.options["max-import"]),
+          fallbackProject:
+            getOptionalString(parsed.options.project) ||
+            basenameSafe(process.cwd()),
+        });
+        printJson(result);
         return;
       }
 
@@ -647,6 +666,7 @@ function printV2Help(): void {
     `  ${APP_NAME} v2 edge --from-type <type> --from-id <id> --to-type <type> --to-id <id> --relation <name>`,
     `  ${APP_NAME} v2 graph --node-type <type> --node-id <id>`,
     `  ${APP_NAME} v2 dashboard [--limit <n>]`,
+    `  ${APP_NAME} v2 ingest [--providers copilot,codex,claude-code] [--max-import <n>]`,
     `  ${APP_NAME} mcp [--data-file <path>]`,
     "",
     `Memory kinds: ${V2_MEMORY_KINDS.join(", ")}`,

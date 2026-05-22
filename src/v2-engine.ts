@@ -5,11 +5,13 @@ import type {
   V2ContextMode,
   V2ContextOptions,
   V2ContextPack,
+  V2DashboardActivity,
   V2DashboardAgent,
   V2DashboardData,
   V2DashboardTask,
   V2Event,
   V2EventInput,
+  V2ImportedEventResult,
   V2GraphEdge,
   V2GraphEdgeInput,
   V2Memory,
@@ -64,6 +66,13 @@ interface EdgeRow {
   metadata_json: string | null;
 }
 
+interface EventImportRow {
+  external_key: string;
+  event_id: number;
+  source: string;
+  imported_at: string;
+}
+
 const DEFAULT_PROJECT = "global";
 const DEFAULT_CONTEXT_CHARS = 1600;
 
@@ -109,6 +118,50 @@ export class V2MemoryEngine {
       );
 
     return this.getEvent(Number(info.lastInsertRowid));
+  }
+
+  addImportedEvent(
+    externalKey: string,
+    input: V2EventInput,
+  ): V2ImportedEventResult {
+    const cleanExternalKey = cleanRequired(externalKey, "external import");
+    const existing = this.db
+      .prepare("SELECT * FROM event_imports WHERE external_key = ?")
+      .get(cleanExternalKey) as EventImportRow | undefined;
+
+    if (existing) {
+      return {
+        event: this.getEvent(existing.event_id),
+        imported: false,
+        externalKey: cleanExternalKey,
+      };
+    }
+
+    const event = this.addEvent(input);
+    this.db
+      .prepare(
+        `INSERT INTO event_imports (external_key, event_id, source, imported_at)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(
+        cleanExternalKey,
+        event.id,
+        cleanRequired(input.source, "manual"),
+        new Date().toISOString(),
+      );
+
+    return { event, imported: true, externalKey: cleanExternalKey };
+  }
+
+  hasImportedEvent(externalKey: string): boolean {
+    const cleanExternalKey = cleanOptional(externalKey);
+    if (!cleanExternalKey) {
+      return false;
+    }
+    const row = this.db
+      .prepare("SELECT 1 FROM event_imports WHERE external_key = ? LIMIT 1")
+      .get(cleanExternalKey);
+    return Boolean(row);
   }
 
   addMemory(input: V2MemoryInput): V2Memory {
@@ -282,8 +335,9 @@ export class V2MemoryEngine {
     const recentEvents = this.listEvents(limit);
     const memories = this.listMemories(limit);
     const edges = this.listEdges(limit * 2);
-    const agents = buildAgents(recentEvents);
     const tasks = buildTasks(recentEvents);
+    const agents = buildAgents(recentEvents, tasks);
+    const activities = buildActivities(recentEvents);
     const projects = new Set([
       ...recentEvents.map((event) => event.project).filter(Boolean),
       ...memories.map((memory) => memory.project).filter(Boolean),
@@ -302,6 +356,7 @@ export class V2MemoryEngine {
       },
       agents,
       tasks,
+      activities,
       memories,
       edges,
       recentEvents,
@@ -334,6 +389,16 @@ export class V2MemoryEngine {
       CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, parent_task_id);
       CREATE INDEX IF NOT EXISTS idx_events_actor ON events(actor, role);
       CREATE INDEX IF NOT EXISTS idx_events_project_time ON events(project, created_at);
+
+      CREATE TABLE IF NOT EXISTS event_imports (
+        external_key TEXT PRIMARY KEY,
+        event_id INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        imported_at TEXT NOT NULL,
+        FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_event_imports_event ON event_imports(event_id);
 
       CREATE TABLE IF NOT EXISTS memories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -428,7 +493,10 @@ function mapEvent(row: EventRow): V2Event {
   };
 }
 
-function buildAgents(events: V2Event[]): V2DashboardAgent[] {
+function buildAgents(
+  events: V2Event[],
+  tasks: V2DashboardTask[],
+): V2DashboardAgent[] {
   const agents = new Map<string, V2DashboardAgent>();
   for (const event of events) {
     const id = event.actor || event.source || "unknown";
@@ -436,6 +504,7 @@ function buildAgents(events: V2Event[]): V2DashboardAgent[] {
       id,
       source: event.source,
       role: event.role || "primary",
+      status: "idle",
       activeTasks: 0,
       completedTasks: 0,
       failedTasks: 0,
@@ -445,17 +514,33 @@ function buildAgents(events: V2Event[]): V2DashboardAgent[] {
     if (event.createdAt > current.lastSeenAt) {
       current.lastSeenAt = event.createdAt;
     }
-    if (event.type === "task_started") {
+    agents.set(id, current);
+  }
+
+  for (const task of tasks) {
+    const id = task.actor || task.source || "unknown";
+    const current = agents.get(id) || {
+      id,
+      source: task.source,
+      role: task.role || "primary",
+      status: "idle",
+      activeTasks: 0,
+      completedTasks: 0,
+      failedTasks: 0,
+      lastSeenAt: task.lastSeenAt,
+    };
+
+    if (task.status === "completed") {
+      current.completedTasks += 1;
+    } else if (task.status === "failed") {
+      current.failedTasks += 1;
+    } else {
       current.activeTasks += 1;
     }
-    if (event.type === "task_completed") {
-      current.completedTasks += 1;
-      current.activeTasks = Math.max(0, current.activeTasks - 1);
+    if (task.lastSeenAt > current.lastSeenAt) {
+      current.lastSeenAt = task.lastSeenAt;
     }
-    if (event.type === "task_failed") {
-      current.failedTasks += 1;
-      current.activeTasks = Math.max(0, current.activeTasks - 1);
-    }
+    current.status = current.activeTasks > 0 ? "active" : "idle";
     agents.set(id, current);
   }
 
@@ -466,24 +551,61 @@ function buildAgents(events: V2Event[]): V2DashboardAgent[] {
 
 function buildTasks(events: V2Event[]): V2DashboardTask[] {
   const tasks = new Map<string, V2DashboardTask>();
-  for (const event of events) {
+  const orderedEvents = [...events].sort((left, right) => {
+    const byTime = left.createdAt.localeCompare(right.createdAt);
+    return byTime !== 0 ? byTime : left.id - right.id;
+  });
+
+  for (const event of orderedEvents) {
     if (!event.taskId) {
       continue;
     }
+    const taskTitle = extractPayloadText(event.payload, [
+      "taskTitle",
+      "title",
+      "objective",
+      "goal",
+    ]);
+    const description = extractPayloadText(event.payload, [
+      "taskDescription",
+      "description",
+      "request",
+      "instruction",
+      "objective",
+      "goal",
+    ]);
+    const reasoning = extractReasoning(event.payload);
     const current = tasks.get(event.taskId) || {
       id: event.taskId,
-      title: event.summary || event.taskId,
+      title: taskTitle || event.summary || event.taskId,
+      description: description || event.summary || "",
+      reasoning: reasoning || "",
       source: event.source,
       actor: event.actor || event.source,
       role: event.role || "primary",
       status: "active",
       project: event.project || "global",
       parentTaskId: event.parentTaskId,
+      latestEventType: event.type,
+      eventCount: 0,
       lastSeenAt: event.createdAt,
     };
-    if (event.summary) {
-      current.title = event.summary;
+    if (taskTitle || (event.summary && event.type === "task_started")) {
+      current.title = taskTitle || event.summary;
     }
+    if (description) {
+      current.description = description;
+    } else if (!current.description && event.summary) {
+      current.description = event.summary;
+    }
+    if (reasoning) {
+      current.reasoning = reasoning;
+    }
+    if (event.parentTaskId) {
+      current.parentTaskId = event.parentTaskId;
+    }
+    current.latestEventType = event.type;
+    current.eventCount += 1;
     current.lastSeenAt =
       event.createdAt > current.lastSeenAt
         ? event.createdAt
@@ -500,6 +622,83 @@ function buildTasks(events: V2Event[]): V2DashboardTask[] {
   return [...tasks.values()].sort((left, right) =>
     right.lastSeenAt.localeCompare(left.lastSeenAt),
   );
+}
+
+function buildActivities(events: V2Event[]): V2DashboardActivity[] {
+  return events.map((event) => ({
+    id: event.id,
+    createdAt: event.createdAt,
+    type: event.type,
+    source: event.source,
+    actor: event.actor || event.source,
+    role: event.role || "primary",
+    taskId: event.taskId,
+    parentTaskId: event.parentTaskId,
+    project: event.project || "global",
+    summary:
+      event.summary ||
+      extractPayloadText(event.payload, ["message", "content", "title"]),
+    reasoning: extractReasoning(event.payload),
+    artifacts: event.artifacts,
+    tags: event.tags,
+    payloadPreview: buildPayloadPreview(event.payload),
+  }));
+}
+
+function extractReasoning(payload: unknown): string {
+  const value = extractPayloadText(payload, [
+    "reasoningSummary",
+    "reasoning_summary",
+    "rationale",
+    "decisionReason",
+    "decision_reason",
+    "plan",
+    "nextStep",
+    "next_step",
+    "traceSummary",
+    "trace_summary",
+    "visibleReasoning",
+    "visible_reasoning",
+  ]);
+  return clipText(value, 900);
+}
+
+function extractPayloadText(payload: unknown, keys: string[]): string {
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+  const record = payload as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+    if (Array.isArray(value)) {
+      const text = value
+        .map((item) => (typeof item === "string" ? item.trim() : ""))
+        .filter(Boolean)
+        .join("\n");
+      if (text) {
+        return text;
+      }
+    }
+  }
+  return "";
+}
+
+function buildPayloadPreview(payload: unknown): string {
+  if (payload === undefined) {
+    return "";
+  }
+  return clipText(JSON.stringify(payload, null, 2), 1200);
+}
+
+function clipText(value: string, maxLength: number): string {
+  const clean = value.trim();
+  if (clean.length <= maxLength) {
+    return clean;
+  }
+  return `${clean.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
 function countRows(db: Database.Database, table: string): number {

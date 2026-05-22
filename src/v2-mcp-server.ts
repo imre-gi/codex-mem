@@ -52,7 +52,7 @@ export async function startV2McpServer(
       {
         name: "agent_event",
         description:
-          "Record an immutable event from an agent, subagent, task, tool call, or outcome.",
+          "Record a live v2 event from an agent, subagent, task, tool call, or outcome. Put visible reasoning summaries in payload.reasoningSummary or payload.rationale.",
         inputSchema: {
           type: "object",
           properties: {
@@ -152,6 +152,17 @@ export async function startV2McpServer(
             limit: { type: "number" },
           },
           required: ["nodeType", "nodeId"],
+        },
+      },
+      {
+        name: "dashboard_snapshot",
+        description:
+          "Return the live Retentia v2 dashboard snapshot: agents, tasks, subtasks, activities, memories, graph edges, and context preview.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            limit: { type: "number" },
+          },
         },
       },
     ],
@@ -255,6 +266,9 @@ async function handleToolCall(
             getNumber(args, "limit"),
           ),
         );
+
+      case "dashboard_snapshot":
+        return textResult(engine.buildDashboard(getNumber(args, "limit")));
 
       default:
         return errorResult(`Unknown tool: ${toolName}`);

@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { V2MemoryEngine } from "../src/v2-engine.js";
+import { ingestV2TaskEvents } from "../src/v2-task-ingest.js";
 
 function withEngine(run: (engine: V2MemoryEngine) => void): void {
   const dir = mkdtempSync(join(tmpdir(), "retentia-v2-test-"));
@@ -130,6 +131,203 @@ describe("V2MemoryEngine", () => {
       expect(edges).toHaveLength(1);
       expect(edges[0]?.toId).toBe("backend-subagent");
       expect(edges[0]?.metadata).toEqual({ task: "migration checks" });
+    });
+  });
+
+  test("builds live dashboard activity with task descriptions and reasoning summaries", () => {
+    withEngine((engine) => {
+      engine.addEvent({
+        type: "task_started",
+        source: "codex",
+        actor: "primary",
+        role: "primary",
+        taskId: "task-root",
+        project: "retentia",
+        summary: "Implement live agent dashboard",
+        payload: {
+          taskDescription: "Render agents and subagents from v2 events.",
+          reasoningSummary:
+            "Use explicit event payload summaries, not session log scraping.",
+        },
+      });
+      engine.addEvent({
+        type: "task_started",
+        source: "codex",
+        actor: "ui-subagent",
+        role: "subagent",
+        taskId: "task-child",
+        parentTaskId: "task-root",
+        project: "retentia",
+        summary: "Build graph UI",
+        payload: {
+          rationale: "Separate parent task edges from agent ownership edges.",
+        },
+      });
+
+      const dashboard = engine.buildDashboard(20);
+      const childTask = dashboard.tasks.find(
+        (task) => task.id === "task-child",
+      );
+
+      expect(dashboard.activities).toHaveLength(2);
+      expect(childTask?.reasoning).toContain("Separate parent");
+      expect(
+        dashboard.tasks.find((task) => task.id === "task-root")?.description,
+      ).toContain("Render agents");
+      expect(
+        dashboard.agents.find((agent) => agent.id === "ui-subagent")?.status,
+      ).toBe("active");
+    });
+  });
+
+  test("ingests Copilot, Codex, and Claude Code events into the v2 dashboard", () => {
+    withEngine((engine) => {
+      const dir = mkdtempSync(join(tmpdir(), "retentia-v2-ingest-test-"));
+      const copilotDir = join(
+        dir,
+        "workspaceStorage",
+        "abc",
+        "GitHub.copilot-chat",
+        "transcripts",
+      );
+      const codexDir = join(dir, "codex");
+      const claudeDir = join(dir, "claude");
+      mkdirSync(copilotDir, { recursive: true });
+      mkdirSync(codexDir, { recursive: true });
+      mkdirSync(claudeDir, { recursive: true });
+
+      writeFileSync(
+        join(copilotDir, "copilot-session.jsonl"),
+        [
+          JSON.stringify({
+            type: "session.start",
+            data: { sessionId: "copilot-session" },
+            id: "copilot-session-start",
+            timestamp: "2026-05-20T20:00:00.000Z",
+            parentId: null,
+          }),
+          JSON.stringify({
+            type: "assistant.turn_start",
+            data: { turnId: "turn-1" },
+            id: "copilot-turn-start",
+            timestamp: "2026-05-20T20:00:01.000Z",
+            parentId: "copilot-session-start",
+          }),
+          JSON.stringify({
+            type: "assistant.message",
+            data: {
+              messageId: "message-1",
+              content: "I will inspect the Retentia importer.",
+              reasoningText:
+                "Use a shared v2 ingest path so UI and CLI see the same data.",
+            },
+            id: "copilot-message",
+            timestamp: "2026-05-20T20:00:02.000Z",
+            parentId: "copilot-turn-start",
+          }),
+          JSON.stringify({
+            type: "assistant.turn_end",
+            data: { turnId: "turn-1" },
+            id: "copilot-turn-end",
+            timestamp: "2026-05-20T20:00:03.000Z",
+            parentId: "copilot-message",
+          }),
+        ].join("\n"),
+      );
+
+      writeFileSync(
+        join(codexDir, "codex-session.jsonl"),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-05-20T20:00:04.000Z",
+          payload: {
+            type: "task_complete",
+            turn_id: "codex-turn-1",
+            last_agent_message: "Codex completed the ingestion bridge.",
+          },
+        }),
+      );
+
+      writeFileSync(
+        join(claudeDir, "claude-session.jsonl"),
+        [
+          JSON.stringify({
+            type: "assistant",
+            timestamp: "2026-05-20T20:00:05.000Z",
+            sessionId: "claude-session",
+            cwd: "/workspace/retentia",
+            message: {
+              model: "claude-code",
+              content: [
+                {
+                  type: "tool_use",
+                  name: "Task",
+                  id: "claude-task-1",
+                  input: {
+                    description: "Validate universal importer",
+                    prompt: "Check Copilot, Codex, and Claude Code ingestion.",
+                    subagent_type: "explore",
+                  },
+                },
+              ],
+            },
+          }),
+          JSON.stringify({
+            type: "user",
+            timestamp: "2026-05-20T20:00:06.000Z",
+            sessionId: "claude-session",
+            cwd: "/workspace/retentia",
+            message: {
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "claude-task-1",
+                  content: "Universal importer works across providers.",
+                },
+              ],
+            },
+          }),
+        ].join("\n"),
+      );
+
+      try {
+        const first = ingestV2TaskEvents(engine, {
+          providers: ["all"],
+          copilotPath: join(dir, "workspaceStorage"),
+          codexPath: codexDir,
+          claudePath: claudeDir,
+          fallbackProject: "retentia",
+          maxImport: 50,
+        });
+        const second = ingestV2TaskEvents(engine, {
+          providers: ["all"],
+          copilotPath: join(dir, "workspaceStorage"),
+          codexPath: codexDir,
+          claudePath: claudeDir,
+          fallbackProject: "retentia",
+          maxImport: 50,
+        });
+        const dashboard = engine.buildDashboard(50);
+
+        expect(first.importedEvents).toBe(7);
+        expect(second.importedEvents).toBe(0);
+        expect(second.skippedEvents).toBe(7);
+        expect(dashboard.tasks.some((task) => task.source === "copilot")).toBe(
+          true,
+        );
+        expect(dashboard.tasks.some((task) => task.source === "codex")).toBe(
+          true,
+        );
+        expect(
+          dashboard.tasks.some((task) => task.source === "claude-code"),
+        ).toBe(true);
+        expect(
+          dashboard.tasks.find((task) => task.source === "claude-code")
+            ?.description,
+        ).toContain("Check Copilot");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 });

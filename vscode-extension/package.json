@@ -1,179 +1,186 @@
 {
-  "name": "retentia-vscode",
-  "displayName": "Retentia",
-  "description": "Retentia command center for memory, RAG, context budgets, and Codex/Claude Code agent visibility inside VS Code",
-  "version": "0.1.1",
-  "publisher": "local",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/imre-gi/codex-mem.git",
-    "directory": "vscode-extension"
-  },
-  "engines": {
-    "vscode": "^1.80.0"
-  },
-  "categories": [
-    "Other"
-  ],
-  "activationEvents": [
-    "onStartupFinished"
-  ],
-  "main": "./dist/extension.js",
-  "contributes": {
-    "commands": [
-      {
-        "command": "codexMem.setup",
-        "title": "Retentia: Install MCP for Codex"
-      },
-      {
-        "command": "codexMem.enableMcp",
-        "title": "Retentia: Enable MCP for Codex"
-      },
-      {
-        "command": "codexMem.initStore",
-        "title": "Retentia: Initialize Store"
-      },
-      {
-        "command": "codexMem.syncCodexTasks",
-        "title": "Retentia: Import Codex and Claude Code Tasks"
-      },
-      {
-        "command": "codexMem.projectExplorer",
-        "title": "Retentia: Agent Command Center"
-      },
-      {
-        "command": "codexMem.statusDashboard",
-        "title": "Retentia: Inspect Agents and Swarms"
-      },
-      {
-        "command": "codexMem.openSettings",
-        "title": "Retentia: Open Settings"
-      },
-      {
-        "command": "codexMem.addObservation",
-        "title": "Retentia: Add Memory"
-      },
-      {
-        "command": "codexMem.addSummary",
-        "title": "Retentia: Save Session Memory"
-      },
-      {
-        "command": "codexMem.search",
-        "title": "Retentia: Search Memory"
-      },
-      {
-        "command": "codexMem.contextPack",
-        "title": "Retentia: Generate Context Pack"
-      },
-      {
-        "command": "codexMem.openMemoryFile",
-        "title": "Retentia: Open Memory File"
-      }
+    "name": "retentia-vscode",
+    "displayName": "Retentia",
+    "description": "Retentia command center for memory, RAG, context budgets, and Copilot/Codex/Claude Code agent visibility inside VS Code",
+    "version": "0.1.1",
+    "publisher": "local",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/imre-gi/codex-mem.git",
+        "directory": "vscode-extension"
+    },
+    "engines": {
+        "vscode": "^1.80.0"
+    },
+    "categories": [
+        "Other"
     ],
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "retentiaSidebar",
-          "title": "Retentia",
-          "icon": "assets/retentia-dashboard-preview.svg"
-        }
-      ]
-    },
-    "views": {
-      "retentiaSidebar": [
-        {
-          "type": "webview",
-          "id": "codexMem.quickInput",
-          "name": "Quick Input"
-        }
-      ]
-    },
-    "configuration": {
-      "title": "Retentia",
-      "properties": {
-        "codexMem.cliPath": {
-          "type": "string",
-          "default": "",
-          "description": "Optional absolute path to the retentia CLI binary (or dist/cli.js file). Leave empty for auto-detection."
-        },
-        "codexMem.defaultProject": {
-          "type": "string",
-          "default": "",
-          "description": "Optional default project name to use when adding entries from VS Code."
-        },
-        "codexMem.autoSyncCodexTasks": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically sync task-execution events from Codex and Claude Code into Retentia when refreshing the dashboard."
-        },
-        "codexMem.enabledProviders": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": [
-              "codex",
-              "claude-code",
-              "all"
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "main": "./dist/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "codexMem.setup",
+                "title": "Retentia: Install MCP for Codex"
+            },
+            {
+                "command": "codexMem.enableMcp",
+                "title": "Retentia: Enable MCP for Codex"
+            },
+            {
+                "command": "codexMem.initStore",
+                "title": "Retentia: Initialize Store"
+            },
+            {
+                "command": "codexMem.syncCodexTasks",
+                "title": "Retentia: Import Copilot, Codex, and Claude Code Tasks"
+            },
+            {
+                "command": "codexMem.projectExplorer",
+                "title": "Retentia: Agent Command Center"
+            },
+            {
+                "command": "codexMem.statusDashboard",
+                "title": "Retentia: Inspect Agents and Swarms"
+            },
+            {
+                "command": "codexMem.openSettings",
+                "title": "Retentia: Open Settings"
+            },
+            {
+                "command": "codexMem.addObservation",
+                "title": "Retentia: Add Memory"
+            },
+            {
+                "command": "codexMem.addSummary",
+                "title": "Retentia: Save Session Memory"
+            },
+            {
+                "command": "codexMem.search",
+                "title": "Retentia: Search Memory"
+            },
+            {
+                "command": "codexMem.contextPack",
+                "title": "Retentia: Generate Context Pack"
+            },
+            {
+                "command": "codexMem.openMemoryFile",
+                "title": "Retentia: Open Memory File"
+            }
+        ],
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "retentiaSidebar",
+                    "title": "Retentia",
+                    "icon": "assets/retentia-dashboard-preview.svg"
+                }
             ]
-          },
-          "default": [
-            "codex",
-            "claude-code"
-          ],
-          "description": "Enabled providers for task ingestion. Use 'all' for Codex and Claude Code."
         },
-        "codexMem.autoSyncLookbackDays": {
-          "type": "number",
-          "default": 7,
-          "minimum": 1,
-          "maximum": 30,
-          "description": "How many recent days of provider session logs are scanned for task execution events."
+        "views": {
+            "retentiaSidebar": [
+                {
+                    "type": "webview",
+                    "id": "codexMem.quickInput",
+                    "name": "Quick Input"
+                }
+            ]
         },
-        "codexMem.autoSyncMaxImport": {
-          "type": "number",
-          "default": 25,
-          "minimum": 1,
-          "maximum": 1000,
-          "description": "Maximum number of new task executions imported into memory per sync run."
-        },
-        "codexMem.autoSyncMaxFiles": {
-          "type": "number",
-          "default": 24,
-          "minimum": 1,
-          "maximum": 200,
-          "description": "Maximum number of recent session files scanned per provider during sync."
-        },
-        "codexMem.codexSessionsPath": {
-          "type": "string",
-          "default": "",
-          "description": "Optional custom path to Codex sessions directory. Leave empty to use ~/.codex/sessions."
-        },
-        "codexMem.claudeSessionsPath": {
-          "type": "string",
-          "default": "",
-          "description": "Optional custom path to Claude Code sessions directory. Leave empty to use ~/.claude/projects."
-        },
-        "codexMem.executionReportLimit": {
-          "type": "number",
-          "default": 600,
-          "minimum": 50,
-          "maximum": 5000,
-          "description": "Maximum number of entries loaded for the dashboard project explorer and execution visualizer."
+        "configuration": {
+            "title": "Retentia",
+            "properties": {
+                "codexMem.cliPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional absolute path to the retentia CLI binary (or dist/cli.js file). Leave empty for auto-detection."
+                },
+                "codexMem.defaultProject": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional default project name to use when adding entries from VS Code."
+                },
+                "codexMem.autoSyncCodexTasks": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Automatically sync task-execution events from Copilot, Codex, and Claude Code into Retentia when refreshing the dashboard."
+                },
+                "codexMem.enabledProviders": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "copilot",
+                            "codex",
+                            "claude-code",
+                            "all"
+                        ]
+                    },
+                    "default": [
+                        "copilot",
+                        "codex",
+                        "claude-code"
+                    ],
+                    "description": "Enabled providers for task ingestion. Use 'all' for Copilot, Codex, and Claude Code."
+                },
+                "codexMem.autoSyncLookbackDays": {
+                    "type": "number",
+                    "default": 7,
+                    "minimum": 1,
+                    "maximum": 30,
+                    "description": "How many recent days of provider session logs are scanned for task execution events."
+                },
+                "codexMem.autoSyncMaxImport": {
+                    "type": "number",
+                    "default": 25,
+                    "minimum": 1,
+                    "maximum": 1000,
+                    "description": "Maximum number of new task executions imported into memory per sync run."
+                },
+                "codexMem.autoSyncMaxFiles": {
+                    "type": "number",
+                    "default": 24,
+                    "minimum": 1,
+                    "maximum": 200,
+                    "description": "Maximum number of recent session files scanned per provider during sync."
+                },
+                "codexMem.copilotTranscriptsPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional custom path to Copilot Chat transcripts or a VS Code workspaceStorage directory. Leave empty to auto-detect common VS Code locations."
+                },
+                "codexMem.codexSessionsPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional custom path to Codex sessions directory. Leave empty to use ~/.codex/sessions."
+                },
+                "codexMem.claudeSessionsPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional custom path to Claude Code sessions directory. Leave empty to use ~/.claude/projects."
+                },
+                "codexMem.executionReportLimit": {
+                    "type": "number",
+                    "default": 600,
+                    "minimum": 50,
+                    "maximum": 5000,
+                    "description": "Maximum number of entries loaded for the dashboard project explorer and execution visualizer."
+                }
+            }
         }
-      }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "package": "npm run build && vsce package --allow-missing-repository",
+        "install:local": "node ./scripts/local-install.mjs",
+        "uninstall:local": "node ./scripts/local-uninstall.mjs"
+    },
+    "devDependencies": {
+        "@vscode/vsce": "^3.6.0",
+        "@types/node": "^24.6.0",
+        "@types/vscode": "^1.80.0",
+        "typescript": "^5.9.3"
     }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "package": "npm run build && vsce package --allow-missing-repository",
-    "install:local": "node ./scripts/local-install.mjs",
-    "uninstall:local": "node ./scripts/local-uninstall.mjs"
-  },
-  "devDependencies": {
-    "@vscode/vsce": "^3.6.0",
-    "@types/node": "^24.6.0",
-    "@types/vscode": "^1.80.0",
-    "typescript": "^5.9.3"
-  }
 }

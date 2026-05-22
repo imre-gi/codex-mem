@@ -175,6 +175,7 @@ const OUTPUT = vscode.window.createOutputChannel("Retentia");
 const DASHBOARD_VIEW_TYPE = "codexMem.statusDashboard.view";
 const QUICK_INPUT_VIEW_TYPE = "codexMem.quickInput";
 const DASHBOARD_TITLE = "Retentia Dashboard";
+const INITIALIZED_DASHBOARD_PANELS = new WeakSet<vscode.WebviewPanel>();
 const MCP_SERVER_SECTIONS = ["mcp_servers.retentia", "mcp_servers.codex-mem"];
 const CODEX_CONFIG_PATH = join(homedir(), ".codex", "config.toml");
 const DEFAULT_AUTO_SYNC_LOOKBACK_DAYS = 7;
@@ -233,27 +234,6 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.startWorker", async () => {
-      await runAndShowJson(["worker", "start"], "Retentia worker started.");
-      await sidebarProvider.refreshStatus();
-    }),
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.stopWorker", async () => {
-      await runAndShowJson(["worker", "stop"], "Retentia worker stopped.");
-      await sidebarProvider.refreshStatus();
-    }),
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("codexMem.workerStatus", async () => {
-      const status = await runCliJson(["worker", "status"]);
-      await openJsonDocument(status, "retentia-worker-status.json");
-    }),
-  );
-
-  context.subscriptions.push(
     vscode.commands.registerCommand("codexMem.syncCodexTasks", async () => {
       const metrics = await syncTaskExecutions({ force: true });
       OUTPUT.appendLine(`Task sync metrics: ${JSON.stringify(metrics)}`);
@@ -298,33 +278,15 @@ export function activate(context: vscode.ExtensionContext): void {
               return;
             }
 
-            if (cmd === "refresh") {
+            if (cmd === "refresh" || cmd === "live-refresh") {
               await renderDashboardPanel(dashboardPanel);
               return;
             }
 
             if (cmd === "setup") {
               await runAndShowJson(
-                ["setup"],
-                "Retentia setup complete. MCP enabled and worker started.",
-              );
-              await renderDashboardPanel(dashboardPanel);
-              return;
-            }
-
-            if (cmd === "start-worker") {
-              await runAndShowJson(
-                ["worker", "start"],
-                "Retentia worker started.",
-              );
-              await renderDashboardPanel(dashboardPanel);
-              return;
-            }
-
-            if (cmd === "stop-worker") {
-              await runAndShowJson(
-                ["worker", "stop"],
-                "Retentia worker stopped.",
+                ["install", "--client", "codex"],
+                "Retentia MCP registration completed for Codex.",
               );
               await renderDashboardPanel(dashboardPanel);
               return;
@@ -662,21 +624,9 @@ class QuickInputSidebarProvider implements vscode.WebviewViewProvider {
 
       if (command === "setup") {
         await runAndShowJson(
-          ["setup"],
-          "Retentia setup complete. MCP enabled and worker started.",
+          ["install", "--client", "codex"],
+          "Retentia MCP registration completed for Codex.",
         );
-        await this.refreshStatus();
-        return;
-      }
-
-      if (command === "start-worker") {
-        await runAndShowJson(["worker", "start"], "Retentia worker started.");
-        await this.refreshStatus();
-        return;
-      }
-
-      if (command === "stop-worker") {
-        await runAndShowJson(["worker", "stop"], "Retentia worker stopped.");
         await this.refreshStatus();
         return;
       }
@@ -1022,37 +972,48 @@ async function openTextDocument(
 }
 
 async function renderDashboardPanel(panel: vscode.WebviewPanel): Promise<void> {
-  panel.webview.html = getAgentDashboardHtml(
-    createEmptyAgentDashboardData(),
-    true,
-  );
+  if (!INITIALIZED_DASHBOARD_PANELS.has(panel)) {
+    panel.webview.html = getAgentDashboardHtml(
+      createEmptyAgentDashboardData(),
+      true,
+    );
+    INITIALIZED_DASHBOARD_PANELS.add(panel);
+  }
 
+  await pushDashboardPanelUpdate(panel);
+}
+
+async function pushDashboardPanelUpdate(
+  panel: vscode.WebviewPanel,
+): Promise<void> {
   try {
     const data = await collectAgentDashboardData();
-    panel.webview.html = getAgentDashboardHtml(data, false);
+    await panel.webview.postMessage({
+      command: "dashboard-update",
+      payload: buildAgentDashboardPayload(data),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     OUTPUT.appendLine(`Dashboard render failed: ${message}`);
-    panel.webview.html = getAgentDashboardHtml(
-      createEmptyAgentDashboardData(message),
-      false,
-    );
+    await panel.webview.postMessage({
+      command: "dashboard-update",
+      payload: buildAgentDashboardPayload(
+        createEmptyAgentDashboardData(message),
+        message,
+      ),
+    });
   }
 }
 
 async function collectAgentDashboardData(): Promise<JsonResult> {
-  const result = toRecord(
+  await syncTaskExecutions({ force: false });
+  return toRecord(
     await runCliJson([
       "dashboard",
       "--limit",
       String(getExecutionReportLimit()),
     ]),
   );
-
-  return {
-    ...result,
-    liveAgents: collectLiveCodexAgents(),
-  };
 }
 
 function createEmptyAgentDashboardData(error?: string): JsonResult {
@@ -1071,9 +1032,9 @@ function createEmptyAgentDashboardData(error?: string): JsonResult {
     tasks: [],
     memories: [],
     edges: [],
+    activities: [],
     recentEvents: [],
     contextPreview: { text: "", usedChars: 0, maxChars: 0, memoryIds: [] },
-    liveAgents: [],
     error,
   };
 }
@@ -1102,10 +1063,7 @@ function collectLiveCodexAgents(limit = 8): LiveAgentSnapshot[] {
     .slice(0, limit);
 }
 
-function collectRecentCodexSessionFiles(
-  root: string,
-  limit: number,
-): string[] {
+function collectRecentCodexSessionFiles(root: string, limit: number): string[] {
   const years = listDirectoriesDescending(root).slice(0, 2);
   const files: Array<{ path: string; mtimeMs: number }> = [];
 
@@ -1315,98 +1273,8 @@ function renderLiveAgentSwarm(liveAgents: LiveAgentSnapshot[]): string {
   return `<svg viewBox="0 0 920 420" role="img" aria-label="Named Codex subagent swarm"><circle cx="50" cy="50" r="20" fill="oklch(0.82 0.16 105)" />${lines}${labels}<text x="77" y="54" fill="oklch(0.98 0.01 248)" font-size="13" font-weight="700">Codex swarm</text></svg>`;
 }
 
-function getAgentDashboardHtml(data: JsonResult, loading: boolean): string {
+function getAgentDashboardHtml(_data: JsonResult, loading: boolean): string {
   const nonce = String(Date.now());
-  const totals = toRecord(data.totals);
-  const agents = arrayOfRecords(data.agents);
-  const liveAgentRecords = arrayOfRecords(data.liveAgents).map((agent) => {
-    const status = toText(agent.status) || "active";
-    return {
-      id: toText(agent.nickname) || toText(agent.id) || "unknown",
-      source: toText(agent.source) || "codex-session",
-      role: toText(agent.role) || "subagent",
-      activeTasks: status === "completed" ? 0 : 1,
-      completedTasks: status === "completed" ? 1 : 0,
-      failedTasks: 0,
-      lastSeenAt: toText(agent.lastSeenAt) || "",
-    };
-  });
-  const displayAgents = liveAgentRecords.length ? liveAgentRecords : agents;
-  const tasks = arrayOfRecords(data.tasks);
-  const memories = arrayOfRecords(data.memories);
-  const edges = arrayOfRecords(data.edges);
-  const events = arrayOfRecords(data.recentEvents);
-  const contextPreview = toRecord(data.contextPreview);
-  const graphNodes = buildGraphNodes(displayAgents, tasks, memories);
-  const error = toText(data.error);
-
-  const agentRows = displayAgents.length
-    ? displayAgents
-        .map(
-          (agent) => `
-          <tr>
-            <td>${escapeHtml(toText(agent.id) || "unknown")}</td>
-            <td>${escapeHtml(toText(agent.source) || "n/a")}</td>
-            <td>${escapeHtml(toText(agent.role) || "primary")}</td>
-            <td>${toNumber(agent.activeTasks) ?? 0}</td>
-            <td>${toNumber(agent.completedTasks) ?? 0}</td>
-            <td>${toNumber(agent.failedTasks) ?? 0}</td>
-            <td>${escapeHtml(formatIsoCompact(toText(agent.lastSeenAt)))}</td>
-          </tr>`,
-        )
-        .join("")
-    : `<tr><td colspan="7" class="muted">No agents have reported events yet.</td></tr>`;
-  const taskRows = tasks.length
-    ? tasks
-        .map(
-          (task) => `
-          <tr>
-            <td>${escapeHtml(toText(task.status) || "active")}</td>
-            <td>${escapeHtml(toText(task.title) || toText(task.id) || "task")}</td>
-            <td>${escapeHtml(toText(task.actor) || "n/a")}</td>
-            <td>${escapeHtml(toText(task.project) || "global")}</td>
-            <td>${escapeHtml(toText(task.parentTaskId) || "root")}</td>
-            <td>${escapeHtml(formatIsoCompact(toText(task.lastSeenAt)))}</td>
-          </tr>`,
-        )
-        .join("")
-    : `<tr><td colspan="6" class="muted">No task graph yet. Emit agent_event records to light this up.</td></tr>`;
-  const memoryRows =
-    memories
-      .slice(0, 18)
-      .map(
-        (memory) => `
-    <li>
-      <strong>${escapeHtml(toText(memory.title) || "Untitled")}</strong>
-      <span>${escapeHtml(toText(memory.kind) || "memory")} / ${escapeHtml(toText(memory.project) || "global")}</span>
-    </li>`,
-      )
-      .join("") || `<li class="muted">No durable memories yet.</li>`;
-  const eventRows =
-    events
-      .slice(0, 16)
-      .map(
-        (event) => `
-    <li>
-      <strong>${escapeHtml(toText(event.type) || "event")}</strong>
-      <span>${escapeHtml(toText(event.actor) || toText(event.source) || "agent")} / ${escapeHtml(toText(event.summary) || "No summary")}</span>
-    </li>`,
-      )
-      .join("") || `<li class="muted">No event stream yet.</li>`;
-  const edgeRows =
-    edges
-      .slice(0, 18)
-      .map(
-        (edge) => `
-    <li>
-      <strong>${escapeHtml(toText(edge.fromType) || "node")}:${escapeHtml(toText(edge.fromId) || "unknown")}</strong>
-      <span>${escapeHtml(toText(edge.relation) || "relates_to")}</span>
-      <strong>${escapeHtml(toText(edge.toType) || "node")}:${escapeHtml(toText(edge.toId) || "unknown")}</strong>
-    </li>`,
-      )
-      .join("") || `<li class="muted">No graph edges yet.</li>`;
-  const graphSvg = renderAgentGraphSvg(graphNodes, edges);
-
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -1429,73 +1297,367 @@ function getAgentDashboardHtml(data: JsonResult, loading: boolean): string {
         --blue: oklch(0.7 0.12 235);
       }
       * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
       body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); }
-      .shell { padding: 18px; max-width: 1380px; margin: 0 auto; }
-      .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-      h1 { margin: 0; font-size: 24px; font-weight: 720; letter-spacing: 0; }
+      .shell { min-height: 100vh; padding: 14px; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 10px; }
+      .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+      h1 { margin: 0; font-size: 20px; font-weight: 720; letter-spacing: 0; }
       .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
-      .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
       button { border: 1px solid var(--line); background: var(--panel2); color: var(--text); border-radius: 7px; padding: 8px 10px; cursor: pointer; }
       button:hover { border-color: var(--blue); }
-      .metrics { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 8px; margin-bottom: 12px; }
-      .metric, .panel { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; }
-      .metric { padding: 11px; }
+      .tab { color: var(--muted); }
+      .tab.active { color: var(--text); border-color: var(--blue); }
+      .live { display: inline-flex; align-items: center; gap: 7px; color: var(--green); font-size: 12px; min-height: 32px; }
+      .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--green); box-shadow: 0 0 0 5px color-mix(in oklch, var(--green), transparent 80%); }
+      .metrics { display: grid; grid-template-columns: repeat(6, minmax(95px, 1fr)); gap: 8px; }
+      .metric, .panel, .map-panel, .inspector { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; }
+      .metric { padding: 8px 10px; min-width: 0; }
       .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-      .v { font-size: 24px; font-weight: 760; margin-top: 5px; }
-      .grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(340px, .8fr); gap: 10px; align-items: stretch; }
-      .overview-grid { grid-template-columns: minmax(0, 1.45fr) minmax(380px, .55fr); }
-      .panel { padding: 12px; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
-      .panel h2 { margin: 0 0 10px; font-size: 15px; }
-      table { width: 100%; border-collapse: collapse; font-size: 12px; }
-      th, td { border-bottom: 1px solid color-mix(in oklch, var(--line), transparent 35%); padding: 7px 6px; text-align: left; vertical-align: top; }
-      th { color: var(--muted); font-weight: 600; }
+      .v { font-size: 18px; font-weight: 760; margin-top: 3px; }
+      .workbench { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, 390px); gap: 10px; }
+      .map-panel, .inspector { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+      .panel-head { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+      .panel-head h2 { margin: 0; font-size: 14px; }
+      .graph { flex: 1; min-height: 0; overflow: auto; padding: 10px; background: oklch(0.19 0.018 248); }
+      .graph svg { display: block; width: 100%; min-width: 940px; height: auto; min-height: 620px; overflow: visible; }
+      .map-node { cursor: pointer; }
+      .map-node:hover rect { stroke-width: 2.5; }
+      .map-node.selected rect { stroke: var(--amber); stroke-width: 2.5; }
+      .inspector-body { min-height: 0; overflow: auto; padding: 12px; display: grid; gap: 12px; }
+      .focus-title { font-size: 16px; font-weight: 760; margin-bottom: 4px; }
+      .kv { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 6px 10px; font-size: 12px; }
+      .kv .key { color: var(--muted); }
+      .section { border-top: 1px solid color-mix(in oklch, var(--line), transparent 35%); padding-top: 10px; }
+      .section h3 { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
       ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 7px; }
       li { border-bottom: 1px solid color-mix(in oklch, var(--line), transparent 45%); padding-bottom: 7px; display: grid; gap: 3px; }
       li span, .muted { color: var(--muted); }
-      .context { white-space: pre-wrap; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; line-height: 1.45; min-height: 420px; max-height: none; flex: 1; overflow: auto; padding: 10px; background: oklch(0.19 0.018 248); border-radius: 8px; border: 1px solid var(--line); }
-      .graph { width: 100%; min-height: 420px; flex: 1; overflow: auto; padding: 8px; background: oklch(0.19 0.018 248); border-radius: 8px; border: 1px solid var(--line); }
-      .graph svg { display: block; width: 100%; min-width: 920px; height: auto; min-height: 420px; overflow: visible; }
+      code { color: var(--muted); white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
+      .state { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px; font-size: 11px; color: var(--muted); }
+      .state-active { color: var(--green); border-color: color-mix(in oklch, var(--green), transparent 35%); }
+      .state-completed { color: var(--blue); border-color: color-mix(in oklch, var(--blue), transparent 35%); }
+      .state-failed { color: var(--red); border-color: color-mix(in oklch, var(--red), transparent 35%); }
+      .reasoning, .context { white-space: pre-wrap; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; line-height: 1.45; }
+      .memory-plane { min-height: 0; overflow: auto; padding: 12px; }
+      .hidden { display: none; }
       .error { border: 1px solid var(--red); color: var(--red); padding: 10px; border-radius: 8px; margin-bottom: 12px; }
-      @media (max-width: 980px) { .metrics, .grid, .overview-grid { grid-template-columns: 1fr; } .top { align-items: flex-start; flex-direction: column; } .context, .graph { min-height: 320px; } .graph svg { min-width: 760px; min-height: 340px; } }
+      @media (max-width: 980px) { .metrics, .workbench { grid-template-columns: 1fr; } .top { align-items: flex-start; flex-direction: column; } .map-panel { min-height: 520px; } .graph svg { min-width: 820px; min-height: 520px; } }
     </style>
   </head>
   <body>
     <main class="shell">
       <div class="top">
-        <div><h1>Retentia Command Center</h1><div class="sub">${escapeHtml(toText(data.dataFile) || "n/a")} / ${escapeHtml(formatIso(toText(data.generatedAt)))}${loading ? " / loading" : ""}</div></div>
-        <div class="actions"><button data-command="refresh">Refresh</button><button data-command="setup">Install MCP</button></div>
+        <div><h1>Retentia Control Plane</h1><div id="dashboardSubtitle" class="sub">${loading ? "Waiting for Retentia v2 stream" : "Retentia v2 stream"}</div></div>
+        <div class="actions"><button class="tab active" data-view="control">Control</button><button class="tab" data-view="memory">Memory</button><span id="streamState" class="live"><span class="dot"></span>Connecting</span><button data-command="refresh">Refresh</button><button data-command="setup">Install MCP</button></div>
       </div>
-      ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
-      <section class="metrics">
-        ${metric("Events", toNumber(totals.events) ?? 0)}
-        ${metric("Memories", toNumber(totals.memories) ?? 0)}
-        ${metric("Edges", toNumber(totals.graphEdges) ?? 0)}
-        ${metric("Agents", toNumber(totals.agents) ?? 0)}
-        ${metric("Tasks", toNumber(totals.tasks) ?? 0)}
-        ${metric("Projects", toNumber(totals.projects) ?? 0)}
+      <div id="dashboardError"></div>
+      <section id="metricStrip" class="metrics"></section>
+      <section id="controlPlane" class="workbench">
+        <div class="map-panel"><div class="panel-head"><h2>Agent Task Map</h2><span class="muted">Select latest active task in inspector</span></div><div id="graph" class="graph"></div></div>
+        <aside class="inspector"><div class="panel-head"><h2>Inspector</h2><span id="updatedAt" class="muted">n/a</span></div><div id="inspectorBody" class="inspector-body"></div></aside>
       </section>
-      <section class="grid overview-grid">
-        <div class="panel"><h2>Agent Swarm Map</h2><div class="graph">${graphSvg}</div></div>
-        <div class="panel"><h2>Context Preview</h2><div class="context">${escapeHtml(toText(contextPreview.text) || "No context yet.")}</div></div>
-      </section>
-      <section class="grid" style="margin-top:10px;">
-        <div class="panel"><h2>Agents</h2><table><thead><tr><th>Agent</th><th>Source</th><th>Role</th><th>Active</th><th>Done</th><th>Failed</th><th>Seen</th></tr></thead><tbody>${agentRows}</tbody></table></div>
-        <div class="panel"><h2>Graph Edges</h2><ul>${edgeRows}</ul></div>
-      </section>
-      <section class="grid" style="margin-top:10px;">
-        <div class="panel"><h2>Tasks</h2><table><thead><tr><th>Status</th><th>Task</th><th>Agent</th><th>Project</th><th>Parent</th><th>Seen</th></tr></thead><tbody>${taskRows}</tbody></table></div>
-        <div class="panel"><h2>Recent Events</h2><ul>${eventRows}</ul></div>
-      </section>
-      <section class="panel" style="margin-top:10px;"><h2>Durable Memory</h2><ul>${memoryRows}</ul></section>
+      <section id="memoryPlane" class="panel memory-plane hidden"></section>
     </main>
     <script nonce="${nonce}">
       const vscode = acquireVsCodeApi();
-      for (const button of document.querySelectorAll("button[data-command]")) {
-        button.addEventListener("click", () => vscode.postMessage({ command: button.getAttribute("data-command") }));
+      let pending = false;
+      let lastSignature = "";
+      let currentView = "control";
+      let selectedNodeId = "";
+      let detailsByNode = {};
+
+      function setHtml(id, html) {
+        const node = document.getElementById(id);
+        if (node) node.innerHTML = html || "";
       }
+
+      function selectNode(nodeId) {
+        selectedNodeId = nodeId || "";
+        for (const node of document.querySelectorAll(".map-node")) {
+          node.classList.toggle("selected", node.getAttribute("data-node-id") === selectedNodeId);
+        }
+        const detail = selectedNodeId ? detailsByNode[selectedNodeId] : "";
+        if (detail) setHtml("inspectorBody", detail);
+      }
+
+      function bindMapNodes(defaultNodeId) {
+        for (const node of document.querySelectorAll(".map-node")) {
+          node.addEventListener("click", () => selectNode(node.getAttribute("data-node-id") || ""));
+        }
+        if (!selectedNodeId || !detailsByNode[selectedNodeId]) selectedNodeId = defaultNodeId || "";
+        selectNode(selectedNodeId);
+      }
+
+      function setView(view) {
+        currentView = view === "memory" ? "memory" : "control";
+        document.getElementById("controlPlane").classList.toggle("hidden", currentView !== "control");
+        document.getElementById("memoryPlane").classList.toggle("hidden", currentView !== "memory");
+        for (const button of document.querySelectorAll("button[data-view]")) {
+          button.classList.toggle("active", button.getAttribute("data-view") === currentView);
+        }
+      }
+
+      function requestStreamUpdate() {
+        if (pending) return;
+        pending = true;
+        vscode.postMessage({ command: "live-refresh" });
+      }
+
+      for (const button of document.querySelectorAll("button[data-command]")) {
+        button.addEventListener("click", () => {
+          pending = false;
+          vscode.postMessage({ command: button.getAttribute("data-command") });
+        });
+      }
+
+      for (const button of document.querySelectorAll("button[data-view]")) {
+        button.addEventListener("click", () => setView(button.getAttribute("data-view") || "control"));
+      }
+
+      window.addEventListener("message", (event) => {
+        const message = event.data || {};
+        if (message.command !== "dashboard-update") return;
+        const payload = message.payload || {};
+        pending = false;
+        const streamState = document.getElementById("streamState");
+        const signature = String(payload.signature || "");
+        if (streamState) streamState.lastChild.textContent = signature === lastSignature ? " Live, no changes" : " Live update";
+        lastSignature = signature;
+        const subtitle = document.getElementById("dashboardSubtitle");
+        const updated = document.getElementById("updatedAt");
+        if (subtitle) subtitle.textContent = String(payload.subtitle || "Retentia v2 stream");
+        if (updated) updated.textContent = String(payload.updatedAt || "n/a");
+        setHtml("dashboardError", payload.errorHtml);
+        setHtml("metricStrip", payload.metricsHtml);
+        setHtml("graph", payload.graphHtml);
+        setHtml("inspectorBody", payload.inspectorHtml);
+        setHtml("memoryPlane", payload.memoryHtml);
+        detailsByNode = payload.detailsByNode || {};
+        bindMapNodes(String(payload.defaultNodeId || ""));
+      });
+
+      window.setInterval(requestStreamUpdate, 1500);
+      requestStreamUpdate();
     </script>
   </body>
 </html>`;
+}
+
+function buildAgentDashboardPayload(
+  data: JsonResult,
+  error?: string,
+): JsonResult {
+  const totals = toRecord(data.totals);
+  const agents = arrayOfRecords(data.agents);
+  const tasks = arrayOfRecords(data.tasks);
+  const activities = arrayOfRecords(data.activities);
+  const memories = arrayOfRecords(data.memories);
+  const edges = arrayOfRecords(data.edges);
+  const contextPreview = toRecord(data.contextPreview);
+  const graphNodes = buildGraphNodes(agents, tasks, memories);
+  const activeTasks = tasks.filter(
+    (task) => (toText(task.status) || "active") === "active",
+  );
+  const focusTask = pickFocusTask(tasks);
+  const generatedAt = toText(data.generatedAt) || new Date().toISOString();
+
+  return {
+    signature: [
+      generatedAt,
+      toNumber(totals.events) ?? 0,
+      toNumber(totals.tasks) ?? 0,
+      activities[0] ? toText(activities[0].id) : "0",
+    ].join(":"),
+    subtitle: `${toText(data.dataFile) || "n/a"} / ${formatIso(generatedAt)}`,
+    updatedAt: formatIsoCompact(generatedAt),
+    errorHtml: error ? `<div class="error">${escapeHtml(error)}</div>` : "",
+    metricsHtml: [
+      metric("Events", toNumber(totals.events) ?? 0),
+      metric("Agents", toNumber(totals.agents) ?? agents.length),
+      metric("Active", activeTasks.length),
+      metric("Tasks", toNumber(totals.tasks) ?? tasks.length),
+      metric("Activity", activities.length),
+      metric("Relations", edges.length),
+    ].join(""),
+    graphHtml: renderAgentGraphSvg(graphNodes, edges, tasks),
+    inspectorHtml: renderInspector(tasks, agents, activities, contextPreview),
+    memoryHtml: renderMemoryPlane(memories, contextPreview),
+    detailsByNode: buildNodeDetails(tasks, agents, activities, contextPreview),
+    defaultNodeId: focusTask ? `task:${toText(focusTask.id)}` : "",
+  };
+}
+
+function renderInspector(
+  tasks: JsonResult[],
+  agents: JsonResult[],
+  activities: JsonResult[],
+  contextPreview: JsonResult,
+): string {
+  const task = pickFocusTask(tasks);
+  if (!task) {
+    return `
+      <div class="muted">No v2 task events yet.</div>
+      <div class="section"><h3>Required signal</h3><div class="reasoning">Emit agent_event with taskId, actor, summary, and payload.reasoningSummary or payload.rationale.</div></div>
+      <div class="section"><h3>Context</h3><div class="context">${escapeHtml(toText(contextPreview.text) || "No context yet.")}</div></div>
+    `;
+  }
+
+  return renderTaskInspector(task, agents, activities, contextPreview);
+}
+
+function buildNodeDetails(
+  tasks: JsonResult[],
+  agents: JsonResult[],
+  activities: JsonResult[],
+  contextPreview: JsonResult,
+): JsonResult {
+  const details: JsonResult = {};
+  for (const task of tasks) {
+    const taskId = toText(task.id);
+    if (taskId) {
+      details[`task:${taskId}`] = renderTaskInspector(
+        task,
+        agents,
+        activities,
+        contextPreview,
+      );
+    }
+  }
+  for (const agent of agents) {
+    const agentId = toText(agent.id);
+    if (agentId) {
+      details[`agent:${agentId}`] = renderAgentInspector(
+        agent,
+        tasks,
+        activities,
+      );
+    }
+  }
+  return details;
+}
+
+function renderTaskInspector(
+  task: JsonResult,
+  agents: JsonResult[],
+  activities: JsonResult[],
+  contextPreview: JsonResult,
+): string {
+  const taskId = toText(task.id) || "unknown";
+  const actor = toText(task.actor) || toText(task.source) || "unknown";
+  const agent = agents.find((item) => toText(item.id) === actor) || {};
+  const matchingActivities = activities
+    .filter((activity) => toText(activity.taskId) === taskId)
+    .slice(0, 8);
+  const fallbackActivity = matchingActivities.find(
+    (activity) => toText(activity.reasoning) || toText(activity.payloadPreview),
+  );
+  const reasoning =
+    toText(task.reasoning) ||
+    toText(fallbackActivity?.reasoning) ||
+    toText(fallbackActivity?.payloadPreview) ||
+    "No explicit reasoning summary recorded for this task.";
+
+  return `
+    <div>
+      <div class="focus-title">${escapeHtml(toText(task.title) || taskId)}</div>
+      <div class="muted">${escapeHtml(toText(task.description) || "No task description recorded yet.")}</div>
+    </div>
+    <div class="kv">
+      <div class="key">Agent</div><div>${escapeHtml(actor)} <span class="state state-${escapeHtml(toText(agent.status) || "idle")}">${escapeHtml(toText(agent.status) || "idle")}</span></div>
+      <div class="key">Role</div><div>${escapeHtml(toText(task.role) || toText(agent.role) || "primary")}</div>
+      <div class="key">Task</div><div>${escapeHtml(taskId)}</div>
+      <div class="key">Parent</div><div>${escapeHtml(toText(task.parentTaskId) || "root")}</div>
+      <div class="key">Project</div><div>${escapeHtml(toText(task.project) || "global")}</div>
+      <div class="key">Status</div><div><span class="state state-${escapeHtml(toText(task.status) || "active")}">${escapeHtml(toText(task.status) || "active")}</span></div>
+      <div class="key">Seen</div><div>${escapeHtml(formatIsoCompact(toText(task.lastSeenAt)))}</div>
+    </div>
+    <div class="section"><h3>Reasoning Summary</h3><div class="reasoning">${escapeHtml(reasoning)}</div></div>
+    <div class="section"><h3>Task Activity</h3><ul>${renderActivityItems(matchingActivities)}</ul></div>
+    <div class="section"><h3>Context Preview</h3><div class="context">${escapeHtml(toText(contextPreview.text) || "No context yet.")}</div></div>
+  `;
+}
+
+function renderAgentInspector(
+  agent: JsonResult,
+  tasks: JsonResult[],
+  activities: JsonResult[],
+): string {
+  const agentId = toText(agent.id) || "unknown";
+  const ownedTasks = tasks.filter(
+    (task) => (toText(task.actor) || toText(task.source)) === agentId,
+  );
+  const activeTask =
+    ownedTasks.find((task) => (toText(task.status) || "active") === "active") ||
+    ownedTasks[0];
+  const agentActivities = activities
+    .filter(
+      (activity) =>
+        (toText(activity.actor) || toText(activity.source)) === agentId,
+    )
+    .slice(0, 8);
+
+  return `
+    <div>
+      <div class="focus-title">${escapeHtml(agentId)}</div>
+      <div class="muted">${escapeHtml(toText(agent.role) || "agent")} / ${escapeHtml(toText(agent.source) || "source unknown")}</div>
+    </div>
+    <div class="kv">
+      <div class="key">Status</div><div><span class="state state-${escapeHtml(toText(agent.status) || "idle")}">${escapeHtml(toText(agent.status) || "idle")}</span></div>
+      <div class="key">On Task</div><div>${escapeHtml(activeTask ? toText(activeTask.title) || toText(activeTask.id) || "task" : "none")}</div>
+      <div class="key">Active</div><div>${toNumber(agent.activeTasks) ?? 0}</div>
+      <div class="key">Done</div><div>${toNumber(agent.completedTasks) ?? 0}</div>
+      <div class="key">Failed</div><div>${toNumber(agent.failedTasks) ?? 0}</div>
+      <div class="key">Seen</div><div>${escapeHtml(formatIsoCompact(toText(agent.lastSeenAt)))}</div>
+    </div>
+    <div class="section"><h3>Current Task Reasoning</h3><div class="reasoning">${escapeHtml(activeTask ? toText(activeTask.reasoning) || toText(activeTask.description) || "No explicit reasoning summary recorded." : "No active task.")}</div></div>
+    <div class="section"><h3>Agent Activity</h3><ul>${renderActivityItems(agentActivities)}</ul></div>
+  `;
+}
+
+function renderMemoryPlane(
+  memories: JsonResult[],
+  contextPreview: JsonResult,
+): string {
+  const rows = memories.length
+    ? memories
+        .slice(0, 80)
+        .map(
+          (memory) => `
+            <li>
+              <strong>${escapeHtml(toText(memory.title) || "Untitled memory")}</strong>
+              <span>${escapeHtml(toText(memory.kind) || "memory")} / ${escapeHtml(toText(memory.project) || "global")}</span>
+              <code>${escapeHtml(clipLabel(toText(memory.body) || "", 260))}</code>
+            </li>`,
+        )
+        .join("")
+    : `<li class="muted">No durable memories yet.</li>`;
+
+  return `<div class="panel-head"><h2>Durable Memory</h2><span class="muted">Separate from live control plane</span></div><div class="inspector-body"><ul>${rows}</ul><div class="section"><h3>Current Context Pack</h3><div class="context">${escapeHtml(toText(contextPreview.text) || "No context yet.")}</div></div></div>`;
+}
+
+function pickFocusTask(tasks: JsonResult[]): JsonResult | undefined {
+  return (
+    tasks.find((task) => (toText(task.status) || "active") === "active") ||
+    tasks[0]
+  );
+}
+
+function renderActivityItems(activities: JsonResult[]): string {
+  if (activities.length === 0) {
+    return `<li class="muted">No events have been recorded for this task yet.</li>`;
+  }
+
+  return activities
+    .map(
+      (activity) => `
+        <li>
+          <strong>${escapeHtml(formatIsoCompact(toText(activity.createdAt)))} / ${escapeHtml(toText(activity.type) || "event")}</strong>
+          <span>${escapeHtml(toText(activity.summary) || "No summary")}</span>
+          <code>${escapeHtml(toText(activity.reasoning) || toText(activity.payloadPreview) || "No explicit reasoning or payload summary.")}</code>
+        </li>`,
+    )
+    .join("");
 }
 
 function metric(label: string, value: number): string {
@@ -1509,40 +1671,60 @@ function arrayOfRecords(value: unknown): JsonResult[] {
 function buildGraphNodes(
   agents: JsonResult[],
   tasks: JsonResult[],
-  memories: JsonResult[],
-): Array<{ id: string; type: string; label: string; x: number; y: number }> {
+  _memories: JsonResult[],
+): Array<{
+  id: string;
+  type: string;
+  label: string;
+  detail: string;
+  status: string;
+  x: number;
+  y: number;
+}> {
   const nodes: Array<{
     id: string;
     type: string;
     label: string;
+    detail: string;
+    status: string;
     x: number;
     y: number;
   }> = [];
-  agents.slice(0, 6).forEach((agent, index) => {
+  const activeTaskByActor = new Map<string, JsonResult>();
+  for (const task of tasks) {
+    const actor = toText(task.actor) || toText(task.source);
+    if (actor && !activeTaskByActor.has(actor)) {
+      activeTaskByActor.set(actor, task);
+    }
+  }
+
+  agents.slice(0, 8).forEach((agent, index) => {
+    const agentId = toText(agent.id) || String(index);
+    const activeTask = activeTaskByActor.get(agentId);
     nodes.push({
-      id: `agent:${toText(agent.id) || index}`,
+      id: `agent:${agentId}`,
       type: "agent",
-      label: toText(agent.id) || "agent",
-      x: 90,
-      y: 70 + index * 54,
+      label: agentId,
+      detail: activeTask
+        ? `on: ${toText(activeTask.title) || toText(activeTask.id) || "task"}`
+        : `${toText(agent.role) || "agent"} / ${toText(agent.status) || "idle"}`,
+      status: toText(agent.status) || "idle",
+      x: 80,
+      y: 75 + index * 66,
     });
   });
-  tasks.slice(0, 8).forEach((task, index) => {
+  tasks.slice(0, 12).forEach((task, index) => {
     nodes.push({
       id: `task:${toText(task.id) || index}`,
       type: "task",
       label: toText(task.title) || toText(task.id) || "task",
-      x: 360,
-      y: 45 + index * 48,
-    });
-  });
-  memories.slice(0, 6).forEach((memory, index) => {
-    nodes.push({
-      id: `memory:${toText(memory.id) || index}`,
-      type: "memory",
-      label: toText(memory.title) || "memory",
-      x: 650,
-      y: 70 + index * 54,
+      detail:
+        toText(task.reasoning) ||
+        toText(task.description) ||
+        `${toText(task.actor) || "agent"} / ${toText(task.status) || "active"}`,
+      status: toText(task.status) || "active",
+      x: 390,
+      y: 55 + index * 56,
     });
   });
   return nodes;
@@ -1553,16 +1735,44 @@ function renderAgentGraphSvg(
     id: string;
     type: string;
     label: string;
+    detail: string;
+    status: string;
     x: number;
     y: number;
   }>,
   edges: JsonResult[],
+  tasks: JsonResult[],
 ): string {
   if (nodes.length === 0) {
     return `<div class="muted" style="padding:16px;">No graph data yet. Record events and edges to inspect agent swarms.</div>`;
   }
   const byId = new Map(nodes.map((node) => [node.id, node]));
-  const lines = edges
+  const taskLines = tasks
+    .slice(0, 120)
+    .map((task) => {
+      const taskId = toText(task.id);
+      const actor = toText(task.actor) || toText(task.source);
+      if (!taskId || !actor) {
+        return "";
+      }
+      const taskNode = byId.get(`task:${taskId}`);
+      const agentNode = byId.get(`agent:${actor}`);
+      const parentTaskId = toText(task.parentTaskId);
+      const parentNode = parentTaskId
+        ? byId.get(`task:${parentTaskId}`)
+        : undefined;
+      const ownership =
+        taskNode && agentNode
+          ? `<line x1="${agentNode.x}" y1="${agentNode.y}" x2="${taskNode.x}" y2="${taskNode.y}" stroke="oklch(0.72 0.14 155)" stroke-width="2" opacity="0.75" />`
+          : "";
+      const delegation =
+        taskNode && parentNode
+          ? `<line x1="${parentNode.x}" y1="${parentNode.y}" x2="${taskNode.x}" y2="${taskNode.y}" stroke="oklch(0.78 0.14 80)" stroke-width="1.5" stroke-dasharray="5 5" opacity="0.8" />`
+          : "";
+      return `${ownership}${delegation}`;
+    })
+    .join("");
+  const persistedLines = edges
     .slice(0, 80)
     .map((edge) => {
       const from = byId.get(`${toText(edge.fromType)}:${toText(edge.fromId)}`);
@@ -1573,7 +1783,7 @@ function renderAgentGraphSvg(
       return `<line x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" stroke="oklch(0.58 0.05 248)" stroke-width="1.5" />`;
     })
     .join("");
-  const circles = nodes
+  const renderedNodes = nodes
     .map((node) => {
       const fill =
         node.type === "agent"
@@ -1581,10 +1791,19 @@ function renderAgentGraphSvg(
           : node.type === "task"
             ? "oklch(0.7 0.12 235)"
             : "oklch(0.78 0.14 80)";
-      return `<g><circle cx="${node.x}" cy="${node.y}" r="13" fill="${fill}" /><text x="${node.x + 20}" y="${node.y + 4}" fill="oklch(0.94 0.008 248)" font-size="12">${escapeHtml(clipLabel(node.label, 30))}</text></g>`;
+      const stroke =
+        node.status === "failed"
+          ? "oklch(0.68 0.16 35)"
+          : node.status === "completed"
+            ? "oklch(0.7 0.12 235)"
+            : node.status === "active"
+              ? "oklch(0.72 0.14 155)"
+              : "oklch(0.38 0.03 248)";
+      const width = node.type === "task" ? 380 : 270;
+      return `<g class="map-node" data-node-id="${escapeHtml(node.id)}"><title>${escapeHtml(`${node.label}: ${node.detail}`)}</title><rect x="${node.x - 12}" y="${node.y - 24}" width="${width}" height="48" rx="7" fill="oklch(0.23 0.02 248)" stroke="${stroke}" /><circle cx="${node.x}" cy="${node.y - 5}" r="8" fill="${fill}" /><text x="${node.x + 17}" y="${node.y - 5}" fill="oklch(0.94 0.008 248)" font-size="12" font-weight="700">${escapeHtml(clipLabel(node.label, node.type === "task" ? 42 : 28))}</text><text x="${node.x + 17}" y="${node.y + 12}" fill="oklch(0.72 0.018 248)" font-size="10">${escapeHtml(clipLabel(node.detail, node.type === "task" ? 54 : 32))}</text></g>`;
     })
     .join("");
-  return `<svg viewBox="0 0 920 440" role="img" aria-label="Agent task memory graph">${lines}${circles}</svg>`;
+  return `<svg viewBox="0 0 980 760" role="img" aria-label="Live v2 agent task graph"><text x="20" y="28" fill="oklch(0.72 0.018 248)" font-size="11">solid: agent owns task / dashed: parent to subtask / node detail shows current task or reasoning</text>${taskLines}${persistedLines}${renderedNodes}</svg>`;
 }
 
 function clipLabel(value: string, maxLength: number): string {
@@ -1789,7 +2008,7 @@ async function syncTaskExecutions(options: {
     };
   }
 
-  const args = ["sync-tasks"];
+  const args = ["ingest"];
   const providers = getEnabledProviders();
   if (providers.length > 0) {
     args.push("--providers", providers.join(","));
@@ -1804,31 +2023,27 @@ async function syncTaskExecutions(options: {
     args.push("--project", defaultProject);
   }
 
+  const copilotPath = getPathSetting("copilotTranscriptsPath");
   const codexPath = getPathSetting("codexSessionsPath");
   const claudePath = getPathSetting("claudeSessionsPath");
-  const qwenPath = getPathSetting("qwenSessionsPath");
-  const gwenPath = getPathSetting("gwenSessionsPath");
+  if (copilotPath) {
+    args.push("--copilot-path", copilotPath);
+  }
   if (codexPath) {
     args.push("--codex-path", codexPath);
   }
   if (claudePath) {
     args.push("--claude-path", claudePath);
   }
-  if (qwenPath) {
-    args.push("--qwen-path", qwenPath);
-  }
-  if (gwenPath) {
-    args.push("--gwen-path", gwenPath);
-  }
 
   const result = toRecord(await runCliJson(args));
   return {
     autoSyncEnabled,
-    detectedTasks: toNumber(result.detectedTasks) ?? 0,
-    importedTasks: toNumber(result.importedTasks) ?? 0,
-    skippedTasks: toNumber(result.skippedTasks) ?? 0,
-    failedTasks: toNumber(result.failedTasks) ?? 0,
-    newestTaskAt: toText(result.newestTaskAt),
+    detectedTasks: toNumber(result.detectedEvents) ?? 0,
+    importedTasks: toNumber(result.importedEvents) ?? 0,
+    skippedTasks: toNumber(result.skippedEvents) ?? 0,
+    failedTasks: toNumber(result.failedEvents) ?? 0,
+    newestTaskAt: toText(result.newestEventAt),
     byProvider: mapProviderSyncList(result.byProvider),
   };
 }
@@ -1872,19 +2087,27 @@ function getAutoSyncLookbackDays(): number {
 function getEnabledProviders(): string[] {
   const configured = vscode.workspace
     .getConfiguration("codexMem")
-    .get<string[]>("enabledProviders", ["codex", "claude", "qwen", "gwen"]);
+    .get<string[]>("enabledProviders", ["copilot", "codex", "claude-code"]);
 
   if (!Array.isArray(configured) || configured.length === 0) {
-    return ["codex", "claude", "qwen", "gwen"];
+    return ["copilot", "codex", "claude-code"];
   }
 
-  const allowed = new Set(["codex", "claude", "qwen", "gwen", "all"]);
+  const allowed = new Set([
+    "copilot",
+    "github-copilot",
+    "copilot-chat",
+    "codex",
+    "claude",
+    "claude-code",
+    "all",
+  ]);
   const normalized = [
     ...new Set(configured.map((item) => item.toLowerCase().trim())),
   ].filter((item) => allowed.has(item));
   return normalized.length > 0
     ? normalized
-    : ["codex", "claude", "qwen", "gwen"];
+    : ["copilot", "codex", "claude-code"];
 }
 
 function getPathSetting(key: string): string | undefined {
@@ -2423,7 +2646,7 @@ function getQuickInputSidebarHtml(): string {
 
     <section>
       <h2>Retentia Quick Input</h2>
-      <div class="row"><span class="k">Worker</span><span id="statusWorker" class="pill warn">Unknown</span></div>
+      <div class="row"><span class="k">Engine</span><span id="statusWorker" class="pill warn">Unknown</span></div>
       <div class="row"><span class="k">Entries</span><span id="statusEntries">0</span></div>
       <div class="row"><span class="k">Projects</span><span id="statusProjects">0</span></div>
       <div class="row"><span class="k">DB</span><span id="statusDb">n/a</span></div>
@@ -2433,8 +2656,6 @@ function getQuickInputSidebarHtml(): string {
         <button data-action="open-dashboard">Dashboard</button>
         <button class="primary" data-action="setup">Setup</button>
         <button data-action="sync-tasks">Sync Tasks</button>
-        <button data-action="start-worker">Start Worker</button>
-        <button data-action="stop-worker">Stop Worker</button>
         <button data-action="open-settings">Settings</button>
       </div>
       <div class="note" style="margin-top:8px;">Use Setup after first install.</div>
@@ -2540,7 +2761,7 @@ function getQuickInputSidebarHtml(): string {
         if (message.command === "status") {
           const payload = message.payload || {};
           const running = payload.workerRunning === true;
-          statusWorker.textContent = running ? "Running" : "Stopped";
+          statusWorker.textContent = running ? "v2 SQLite" : "Unavailable";
           statusWorker.className = running ? "pill ok" : "pill warn";
           statusEntries.textContent = String(payload.entriesTotal ?? 0);
           statusProjects.textContent = String(payload.projectsTotal ?? 0);
